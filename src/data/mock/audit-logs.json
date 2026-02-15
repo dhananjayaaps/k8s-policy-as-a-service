@@ -1,0 +1,74 @@
+[
+  {
+    "id": "log-001",
+    "cluster_id": "cluster-001",
+    "resource_name": "nginx-deployment/pod-abc123",
+    "policy_violated": "Disallow Root Containers",
+    "action_taken": "BLOCKED",
+    "details": "Container 'nginx' attempted to run as root user. Deployment was blocked per security policy.",
+    "timestamp": "2026-02-15T10:30:00Z"
+  },
+  {
+    "id": "log-002",
+    "cluster_id": "cluster-001",
+    "resource_name": "api-server/pod-def456",
+    "policy_violated": "Block Latest Tag",
+    "action_taken": "BLOCKED",
+    "details": "Image 'api-server:latest' uses forbidden 'latest' tag. Use a specific version tag instead.",
+    "timestamp": "2026-02-15T09:45:00Z"
+  },
+  {
+    "id": "log-003",
+    "cluster_id": "cluster-002",
+    "resource_name": "worker-service/deployment",
+    "policy_violated": "Require Resource Limits",
+    "action_taken": "WARNED",
+    "details": "Deployment missing CPU and memory limits. This may lead to resource exhaustion.",
+    "timestamp": "2026-02-15T08:20:00Z"
+  },
+  {
+    "id": "log-004",
+    "cluster_id": "cluster-001",
+    "resource_name": "test-pod/pod-ghi789",
+    "policy_violated": "Disallow Default Namespace",
+    "action_taken": "BLOCKED",
+    "details": "Attempted deployment to 'default' namespace. Use a project-specific namespace.",
+    "timestamp": "2026-02-14T16:55:00Z"
+  },
+  {
+    "id": "log-005",
+    "cluster_id": "cluster-003",
+    "resource_name": "frontend-app/deployment",
+    "policy_violated": "Require Resource Limits",
+    "action_taken": "WARNED",
+    "details": "Container 'frontend' missing memory limits configuration.",
+    "timestamp": "2026-02-14T14:30:00Z"
+  },
+  {
+    "id": "log-006",
+    "cluster_id": "cluster-001",
+    "resource_name": "database-pod/pod-jkl012",
+    "policy_violated": "Disallow Root Containers",
+    "action_taken": "BLOCKED",
+    "details": "PostgreSQL container configured to run as root. Add runAsNonRoot: true to securityContext.",
+    "timestamp": "2026-02-14T11:15:00Z"
+  },
+  {
+    "id": "log-007",
+    "cluster_id": "cluster-002",
+    "resource_name": "cache-service/deployment",
+    "policy_violated": "Block Latest Tag",
+    "action_taken": "BLOCKED",
+    "details": "Redis image using ':latest' tag blocked. Specify version like 'redis:7.2.4'.",
+    "timestamp": "2026-02-13T18:40:00Z"
+  },
+  {
+    "id": "log-008",
+    "cluster_id": "cluster-001",
+    "resource_name": "monitoring-stack/prometheus",
+    "policy_violated": "Require Resource Limits",
+    "action_taken": "WARNED",
+    "details": "Prometheus deployment exceeds recommended resource allocation.",
+    "timestamp": "2026-02-13T10:00:00Z"
+  }
+]

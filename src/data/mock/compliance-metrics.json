@@ -1,0 +1,29 @@
+[
+  {
+    "id": "metric-001",
+    "cluster_id": "cluster-001",
+    "overall_score": 87,
+    "security_score": 92,
+    "cost_score": 78,
+    "reliability_score": 91,
+    "recorded_at": "2026-02-15T10:00:00Z"
+  },
+  {
+    "id": "metric-002",
+    "cluster_id": "cluster-002",
+    "overall_score": 94,
+    "security_score": 96,
+    "cost_score": 89,
+    "reliability_score": 97,
+    "recorded_at": "2026-02-15T10:00:00Z"
+  },
+  {
+    "id": "metric-003",
+    "cluster_id": "cluster-003",
+    "overall_score": 72,
+    "security_score": 68,
+    "cost_score": 82,
+    "reliability_score": 66,
+    "recorded_at": "2026-02-15T10:00:00Z"
+  }
+]

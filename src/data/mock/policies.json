@@ -1,0 +1,62 @@
+[
+  {
+    "id": "policy-001",
+    "category": "Security",
+    "title": "Disallow Root Containers",
+    "description": "Prevents containers from running as the root user, reducing the attack surface and following security best practices.",
+    "yaml_template": "apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: disallow-root-containers\nspec:\n  validationFailureAction: enforce\n  rules:\n    - name: check-security-context\n      match:\n        resources:\n          kinds:\n            - Pod\n      validate:\n        message: \"Containers must not run as root\"\n        pattern:\n          spec:\n            containers:\n              - securityContext:\n                  runAsNonRoot: true",
+    "is_active": true,
+    "severity": "high",
+    "created_at": "2026-01-10T10:00:00Z"
+  },
+  {
+    "id": "policy-002",
+    "category": "Reliability",
+    "title": "Block Latest Tag",
+    "description": "Blocks the use of 'latest' image tag to ensure reproducible deployments and prevent unexpected behavior from image updates.",
+    "yaml_template": "apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: block-latest-tag\nspec:\n  validationFailureAction: enforce\n  rules:\n    - name: validate-image-tag\n      match:\n        resources:\n          kinds:\n            - Pod\n      validate:\n        message: \"Using 'latest' tag is not allowed\"\n        pattern:\n          spec:\n            containers:\n              - image: \"!*:latest\"",
+    "is_active": true,
+    "severity": "medium",
+    "created_at": "2026-01-12T11:00:00Z"
+  },
+  {
+    "id": "policy-003",
+    "category": "Cost",
+    "title": "Require Resource Limits",
+    "description": "Ensures all containers have CPU and memory limits defined to prevent resource exhaustion and control costs.",
+    "yaml_template": "apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: require-resource-limits\nspec:\n  validationFailureAction: audit\n  rules:\n    - name: validate-resources\n      match:\n        resources:\n          kinds:\n            - Pod\n      validate:\n        message: \"Resource limits are required\"\n        pattern:\n          spec:\n            containers:\n              - resources:\n                  limits:\n                    memory: \"?*\"\n                    cpu: \"?*\"",
+    "is_active": true,
+    "severity": "medium",
+    "created_at": "2026-01-15T09:00:00Z"
+  },
+  {
+    "id": "policy-004",
+    "category": "Governance",
+    "title": "Disallow Default Namespace",
+    "description": "Prevents deployments to the default namespace, enforcing proper namespace organization and isolation.",
+    "yaml_template": "apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: disallow-default-namespace\nspec:\n  validationFailureAction: enforce\n  rules:\n    - name: validate-namespace\n      match:\n        resources:\n          kinds:\n            - Pod\n            - Deployment\n            - Service\n      validate:\n        message: \"Default namespace is not allowed\"\n        pattern:\n          metadata:\n            namespace: \"!default\"",
+    "is_active": true,
+    "severity": "low",
+    "created_at": "2026-01-18T14:00:00Z"
+  },
+  {
+    "id": "policy-005",
+    "category": "Security",
+    "title": "Require Read-Only Root Filesystem",
+    "description": "Enforces read-only root filesystem for containers to prevent malicious writes and ensure immutability.",
+    "yaml_template": null,
+    "is_active": false,
+    "severity": "high",
+    "created_at": "2026-01-20T16:00:00Z"
+  },
+  {
+    "id": "policy-006",
+    "category": "Cost",
+    "title": "Limit Replica Count",
+    "description": "Limits the maximum number of replicas in a deployment to prevent runaway scaling and cost overruns.",
+    "yaml_template": null,
+    "is_active": false,
+    "severity": "low",
+    "created_at": "2026-01-22T10:00:00Z"
+  }
+]
