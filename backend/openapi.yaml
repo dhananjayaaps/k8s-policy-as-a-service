@@ -1,0 +1,1074 @@
+openapi: 3.0.3
+info:
+  title: Kyverno Management API
+  description: |
+    Complete API for managing Kubernetes clusters and Kyverno policies with multi-user session support.
+    
+    ## Key Features
+    - Multi-user session-based connections (SSH and Kubernetes)
+    - Remote cluster access via SSH
+    - Service account token management
+    - Automated Kyverno installation via Helm
+    - Policy lifecycle management
+    
+    ## Authentication
+    Session-based authentication using unique session IDs for SSH and Kubernetes connections.
+    
+    ## Session Management
+    - SSH sessions expire after 30 minutes of inactivity
+    - K8s sessions expire after 60 minutes of inactivity
+    - Sessions are automatically cleaned up upon expiration
+    
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@example.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8001
+    description: Local development server
+  - url: https://api.example.com
+    description: Production server
+
+tags:
+  - name: SSH Connection
+    description: Manage SSH connections to remote servers
+  - name: Cluster Setup
+    description: Complete cluster setup workflows
+  - name: Cluster Management
+    description: Kubernetes cluster operations
+  - name: Kyverno
+    description: Kyverno installation and management
+  - name: Service Account
+    description: Service account token management
+  - name: Policy
+    description: Policy template management
+  - name: Session Management
+    description: Monitor and manage active sessions
+
+paths:
+  /clusters/ssh/connect:
+    post:
+      tags:
+        - SSH Connection
+      summary: Connect to remote server via SSH
+      description: |
+        Establish an SSH connection to a remote server where Kubernetes is running.
+        Returns a unique session_id that must be used for all subsequent SSH operations.
+        Sessions expire after 30 minutes of inactivity.
+      operationId: sshConnect
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SSHConnectRequest'
+            examples:
+              withKey:
+                summary: Connect with PEM key
+                value:
+                  host: "192.168.1.100"
+                  username: "ubuntu"
+                  pem_key_content: "-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"
+                  port: 22
+              withPassword:
+                summary: Connect with password
+                value:
+                  host: "192.168.1.100"
+                  username: "ubuntu"
+                  password: "secretpassword"
+                  port: 22
+      responses:
+        '200':
+          description: Successfully connected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SSHConnectResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /clusters/ssh/execute:
+    post:
+      tags:
+        - SSH Connection
+      summary: Execute command on remote server
+      description: Execute a command on the connected remote server via SSH
+      operationId: sshExecute
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SSHCommandRequest'
+      responses:
+        '200':
+          description: Command executed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SSHCommandResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /clusters/ssh/kubeconfig:
+    post:
+      tags:
+        - SSH Connection
+      summary: Get kubeconfig from remote server
+      description: |
+        Retrieve kubeconfig content from the remote server.
+        If portable=true, returns kubeconfig with embedded certificates.
+      operationId: sshGetKubeconfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SSHKubeconfigRequest'
+      responses:
+        '200':
+          description: Kubeconfig retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SSHKubeconfigResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /clusters/ssh/minikube-status:
+    get:
+      tags:
+        - SSH Connection
+      summary: Check Minikube status
+      description: Check if Minikube is running on the remote server
+      operationId: sshMinikubeStatus
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: SSH session identifier
+      responses:
+        '200':
+          description: Minikube status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MinikubeStatusResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /clusters/ssh/kyverno/install:
+    post:
+      tags:
+        - Kyverno
+      summary: Install Kyverno via SSH
+      description: Install Kyverno on remote cluster via SSH using Helm
+      operationId: sshInstallKyverno
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoteKyvernoInstallRequest'
+      responses:
+        '200':
+          description: Kyverno installed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KyvernoInstallResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /clusters/ssh/disconnect:
+    post:
+      tags:
+        - SSH Connection
+      summary: Disconnect SSH session
+      description: Close the SSH connection and clean up the session
+      operationId: sshDisconnect
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: SSH session identifier
+      responses:
+        '200':
+          description: Successfully disconnected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /clusters/ssh/status:
+    get:
+      tags:
+        - SSH Connection
+      summary: Check SSH connection status
+      description: Verify if an SSH session is still active
+      operationId: sshStatus
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: SSH session identifier
+      responses:
+        '200':
+          description: Session status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connected:
+                    type: boolean
+                  host:
+                    type: string
+                    nullable: true
+                  session_id:
+                    type: string
+                  error:
+                    type: string
+                    nullable: true
+
+  /clusters/ssh/sessions:
+    get:
+      tags:
+        - Session Management
+      summary: List all active SSH sessions
+      description: View all active SSH sessions for monitoring and debugging
+      operationId: listSshSessions
+      responses:
+        '200':
+          description: List of active sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        host:
+                          type: string
+                        connected:
+                          type: boolean
+                        created_at:
+                          type: string
+                          format: date-time
+                        age_minutes:
+                          type: number
+                  count:
+                    type: integer
+
+  /clusters/setup:
+    post:
+      tags:
+        - Cluster Setup
+      summary: Complete cluster setup workflow
+      description: |
+        One-stop endpoint for complete cluster setup:
+        1. Creates service account with token on remote cluster
+        2. Saves cluster to database with public IP
+        3. Saves service account token to database
+        4. Optionally installs Kyverno via Helm
+        
+        This is the recommended way to set up a new cluster.
+      operationId: setupCluster
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClusterSetupRequest'
+      responses:
+        '200':
+          description: Cluster set up successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterSetupResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /clusters/connect:
+    post:
+      tags:
+        - Cluster Management
+      summary: Connect to cluster via kubeconfig
+      description: Connect to a Kubernetes cluster using kubeconfig content
+      operationId: connectCluster
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClusterConnectRequest'
+      responses:
+        '200':
+          description: Successfully connected to cluster
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterConnectResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /clusters/connect-with-token:
+    post:
+      tags:
+        - Cluster Management
+      summary: Connect to cluster with service account token
+      description: Connect using a service account token (no kubeconfig needed)
+      operationId: connectWithToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenConnectRequest'
+      responses:
+        '200':
+          description: Successfully connected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterConnectResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /clusters/namespaces:
+    get:
+      tags:
+        - Cluster Management
+      summary: List namespaces
+      description: Get all namespaces in the currently connected cluster
+      operationId: listNamespaces
+      responses:
+        '200':
+          description: List of namespaces
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NamespaceListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /clusters/info:
+    get:
+      tags:
+        - Cluster Management
+      summary: Get cluster information
+      description: Get information about the currently connected cluster
+      operationId: getClusterInfo
+      responses:
+        '200':
+          description: Cluster information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  server:
+                    type: string
+                  version:
+                    type: string
+                  context:
+                    type: string
+
+  /clusters/kyverno/status:
+    get:
+      tags:
+        - Kyverno
+      summary: Check Kyverno status
+      description: Get comprehensive Kyverno installation status
+      operationId: kyvernoStatus
+      responses:
+        '200':
+          description: Kyverno status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KyvernoStatusResponse'
+
+  /clusters/{cluster_id}/install-kyverno:
+    post:
+      tags:
+        - Kyverno
+      summary: Install Kyverno using saved token
+      description: |
+        Install Kyverno on a cluster using a saved service account token.
+        No SSH connection required - uses stored credentials.
+      operationId: installKyvernoWithToken
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Cluster ID from database
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KyvernoInstallViaTokenRequest'
+      responses:
+        '200':
+          description: Kyverno installed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KyvernoInstallResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /clusters/{cluster_id}/serviceaccounts:
+    get:
+      tags:
+        - Service Account
+      summary: List service accounts for cluster
+      description: Get all service account tokens stored for a cluster
+      operationId: listServiceAccounts
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of service accounts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ServiceAccountResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /clusters/{cluster_id}/serviceaccount:
+    post:
+      tags:
+        - Service Account
+      summary: Create service account with token
+      description: Create a service account with token on remote cluster via SSH
+      operationId: createServiceAccount
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceAccountCreate'
+      responses:
+        '200':
+          description: Service account created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceAccountResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /policies:
+    get:
+      tags:
+        - Policy
+      summary: List all policies
+      description: Get all available Kyverno policy templates
+      operationId: listPolicies
+      responses:
+        '200':
+          description: List of policies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Policy'
+
+  /policies/{policy_id}/deploy:
+    post:
+      tags:
+        - Policy
+      summary: Deploy policy to cluster
+      description: Deploy a policy template to a specific cluster
+      operationId: deployPolicy
+      parameters:
+        - name: policy_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - cluster_id
+              properties:
+                cluster_id:
+                  type: integer
+                namespace:
+                  type: string
+                  default: "default"
+                parameters:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Policy deployed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  policy_id:
+                    type: integer
+                  cluster_id:
+                    type: integer
+                  namespace:
+                    type: string
+                  status:
+                    type: string
+                  deployed_at:
+                    type: string
+                    format: date-time
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  schemas:
+    SSHConnectRequest:
+      type: object
+      required:
+        - host
+        - username
+      properties:
+        host:
+          type: string
+          description: Server IP or hostname
+          example: "192.168.1.100"
+        username:
+          type: string
+          description: SSH username
+          example: "ubuntu"
+        pem_key_content:
+          type: string
+          description: PEM private key content (provide either this or password)
+          example: "-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"
+        password:
+          type: string
+          description: SSH password (provide either this or pem_key_content)
+          format: password
+        port:
+          type: integer
+          description: SSH port
+          default: 22
+          minimum: 1
+          maximum: 65535
+
+    SSHConnectResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        session_id:
+          type: string
+          format: uuid
+          description: Unique session identifier for this SSH connection
+        host:
+          type: string
+          nullable: true
+
+    SSHCommandRequest:
+      type: object
+      required:
+        - session_id
+        - command
+      properties:
+        session_id:
+          type: string
+          format: uuid
+          description: SSH session identifier
+        command:
+          type: string
+          description: Command to execute
+          example: "kubectl get nodes"
+        timeout:
+          type: integer
+          description: Command timeout in seconds
+          default: 60
+          minimum: 1
+
+    SSHCommandResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        stdout:
+          type: string
+        stderr:
+          type: string
+        exit_code:
+          type: integer
+
+    SSHKubeconfigRequest:
+      type: object
+      required:
+        - session_id
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        kubeconfig_path:
+          type: string
+          description: Path to kubeconfig on remote server
+          default: "~/.kube/config"
+        portable:
+          type: boolean
+          description: Get portable kubeconfig with embedded certs
+          default: true
+        context:
+          type: string
+          description: Kubernetes context to export
+          nullable: true
+
+    SSHKubeconfigResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        kubeconfig_content:
+          type: string
+          description: Kubeconfig YAML content
+        message:
+          type: string
+
+    MinikubeStatusResponse:
+      type: object
+      properties:
+        running:
+          type: boolean
+        status:
+          type: object
+          nullable: true
+          additionalProperties: true
+        error:
+          type: string
+          nullable: true
+
+    ClusterSetupRequest:
+      type: object
+      required:
+        - session_id
+        - cluster_name
+      properties:
+        session_id:
+          type: string
+          format: uuid
+          description: SSH session identifier
+        cluster_name:
+          type: string
+          description: Cluster name for database
+        cluster_description:
+          type: string
+          description: Cluster description
+          nullable: true
+        service_account_name:
+          type: string
+          description: Service account name
+          default: "kyverno-admin"
+        namespace:
+          type: string
+          description: Namespace for service account
+          default: "kyverno"
+        role_type:
+          type: string
+          description: Role type for the service account
+          enum: [view, edit, admin, cluster-admin, custom]
+          default: "cluster-admin"
+        install_kyverno:
+          type: boolean
+          description: Install Kyverno after setup
+          default: false
+        kyverno_namespace:
+          type: string
+          description: Namespace for Kyverno installation
+          default: "kyverno"
+
+    ClusterSetupResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        cluster_id:
+          type: integer
+        cluster_name:
+          type: string
+        host:
+          type: string
+        server_url:
+          type: string
+        service_account_id:
+          type: integer
+        service_account_name:
+          type: string
+        token:
+          type: string
+          description: JWT token for API access
+        kyverno_installed:
+          type: boolean
+          default: false
+        kyverno_message:
+          type: string
+          nullable: true
+
+    ClusterConnectRequest:
+      type: object
+      required:
+        - kubeconfig_content
+      properties:
+        kubeconfig_content:
+          type: string
+          description: Kubeconfig YAML content
+        context:
+          type: string
+          description: Kubernetes context to use
+          nullable: true
+
+    ClusterConnectResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        cluster_info:
+          type: object
+          nullable: true
+          properties:
+            server:
+              type: string
+            version:
+              type: string
+        namespaces:
+          type: array
+          nullable: true
+          items:
+            type: string
+
+    TokenConnectRequest:
+      type: object
+      required:
+        - server_url
+        - token
+      properties:
+        server_url:
+          type: string
+          description: Kubernetes API server URL
+          example: "https://192.168.1.100:6443"
+        token:
+          type: string
+          description: Service account token
+        ca_cert_data:
+          type: string
+          description: CA certificate base64 data
+          nullable: true
+        verify_ssl:
+          type: boolean
+          default: true
+
+    NamespaceListResponse:
+      type: object
+      properties:
+        namespaces:
+          type: array
+          items:
+            type: string
+        count:
+          type: integer
+
+    RemoteKyvernoInstallRequest:
+      type: object
+      required:
+        - session_id
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        namespace:
+          type: string
+          default: "kyverno"
+        release_name:
+          type: string
+          default: "kyverno"
+        create_namespace:
+          type: boolean
+          default: true
+
+    KyvernoInstallViaTokenRequest:
+      type: object
+      required:
+        - cluster_id
+      properties:
+        cluster_id:
+          type: integer
+        service_account_id:
+          type: integer
+          description: Service account token ID (uses cluster's first token if not provided)
+          nullable: true
+        namespace:
+          type: string
+          default: "kyverno"
+        release_name:
+          type: string
+          default: "kyverno"
+        create_namespace:
+          type: boolean
+          default: true
+
+    KyvernoInstallResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        release_name:
+          type: string
+        namespace:
+          type: string
+        output:
+          type: string
+          description: Helm installation output
+
+    KyvernoStatusResponse:
+      type: object
+      properties:
+        installed:
+          type: boolean
+        helm_deployed:
+          type: boolean
+        release_name:
+          type: string
+          nullable: true
+        namespace:
+          type: string
+          nullable: true
+        chart_version:
+          type: string
+          nullable: true
+        app_version:
+          type: string
+          nullable: true
+        deployment_status:
+          type: string
+          nullable: true
+        pods_ready:
+          type: boolean
+        api_resources_available:
+          type: boolean
+        webhook_configured:
+          type: boolean
+        details:
+          type: object
+          nullable: true
+          additionalProperties: true
+
+    ServiceAccountCreate:
+      type: object
+      required:
+        - session_id
+        - name
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: Service account name
+        namespace:
+          type: string
+          default: "default"
+        role_type:
+          type: string
+          enum: [view, edit, admin, cluster-admin, custom]
+          default: "view"
+        role_name:
+          type: string
+          description: Custom ClusterRole or Role name
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        duration:
+          type: string
+          description: Token duration (e.g., 87600h = 10 years, 24h = 1 day)
+          default: "87600h"
+          pattern: '^\d+[hms]$'
+
+    ServiceAccountResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        cluster_id:
+          type: integer
+        name:
+          type: string
+        namespace:
+          type: string
+        token:
+          type: string
+        role_type:
+          type: string
+        role_name:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    Policy:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        category:
+          type: string
+        description:
+          type: string
+        yaml_template:
+          type: string
+        parameters:
+          type: object
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      properties:
+        detail:
+          type: string
+          description: Error message
+
+  responses:
+    BadRequest:
+      description: Bad request - Invalid input or session
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            invalidSession:
+              value:
+                detail: "SSH session not found: 550e8400-e29b-41d4-a716-446655440000"
+            expiredSession:
+              value:
+                detail: "SSH session expired: 550e8400-e29b-41d4-a716-446655440000"
+            connectionLost:
+              value:
+                detail: "SSH connection is no longer active. Please reconnect."
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            detail: "Cluster not found"
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            sshError:
+              value:
+                detail: "Failed to connect via SSH: Connection refused"
+            commandError:
+              value:
+                detail: "Failed to execute command: Command timed out"
+
+  securitySchemes:
+    sessionId:
+      type: apiKey
+      in: query
+      name: session_id
+      description: Session-based authentication using SSH or K8s session ID
+
+security: []
