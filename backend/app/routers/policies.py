@@ -10,7 +10,7 @@ from typing import List
 from datetime import datetime
 
 from app.db import get_db
-from app.models import Policy, PolicyDeployment, Cluster, AuditLog
+from app.models import Policy, PolicyDeployment, Cluster, AuditLog, ServiceAccountToken
 from app.schemas import (
     PolicyCreate,
     PolicyUpdate,
@@ -31,8 +31,16 @@ router = APIRouter(prefix="/policies", tags=["policies"])
 @router.post("/", response_model=PolicyResponse)
 async def create_policy(policy: PolicyCreate, db: Session = Depends(get_db)):
     """
-    Create a new policy template.
+    Create a new policy template for a specific cluster.
     """
+    # Check if cluster exists
+    cluster = db.query(Cluster).filter(Cluster.id == policy.cluster_id).first()
+    if not cluster:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Cluster with ID {policy.cluster_id} not found"
+        )
+    
     # Validate the policy YAML
     validator = get_validation_service()
     validation_result = validator.validate_policy(policy.yaml_template)
@@ -46,12 +54,15 @@ async def create_policy(policy: PolicyCreate, db: Session = Depends(get_db)):
             }
         )
     
-    # Check if policy with same name exists
-    existing = db.query(Policy).filter(Policy.name == policy.name).first()
+    # Check if policy with same name exists in this cluster
+    existing = db.query(Policy).filter(
+        Policy.name == policy.name,
+        Policy.cluster_id == policy.cluster_id
+    ).first()
     if existing:
         raise HTTPException(
             status_code=400,
-            detail=f"Policy with name '{policy.name}' already exists"
+            detail=f"Policy with name '{policy.name}' already exists in cluster '{cluster.name}'"
         )
     
     db_policy = Policy(**policy.model_dump())
@@ -64,7 +75,12 @@ async def create_policy(policy: PolicyCreate, db: Session = Depends(get_db)):
         action="policy_create",
         resource_type="policy",
         resource_id=db_policy.id,
-        details={"name": policy.name, "category": policy.category},
+        details={
+            "name": policy.name,
+            "category": policy.category,
+            "cluster_id": policy.cluster_id,
+            "cluster_name": cluster.name
+        },
         status="success"
     )
     db.add(audit)
@@ -75,15 +91,45 @@ async def create_policy(policy: PolicyCreate, db: Session = Depends(get_db)):
 
 @router.get("/", response_model=List[PolicyResponse])
 async def list_policies(
+    cluster_id: int = None,
     skip: int = 0,
     limit: int = 100,
     category: str = None,
     db: Session = Depends(get_db)
 ):
     """
-    List all policy templates.
+    List policy templates. Filter by cluster_id to get cluster-specific policies.
     """
     query = db.query(Policy)
+    
+    if cluster_id:
+        query = query.filter(Policy.cluster_id == cluster_id)
+    
+    if category:
+        query = query.filter(Policy.category == category)
+    
+    policies = query.offset(skip).limit(limit).all()
+    return policies
+
+
+@router.get("/cluster/{cluster_id}", response_model=List[PolicyResponse])
+async def list_cluster_policies(
+    cluster_id: int,
+    skip: int = 0,
+    limit: int = 100,
+    category: str = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all policies for a specific cluster.
+    """
+    # Verify cluster exists
+    cluster = db.query(Cluster).filter(Cluster.id == cluster_id).first()
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+    
+    query = db.query(Policy).filter(Policy.cluster_id == cluster_id)
+    
     if category:
         query = query.filter(Policy.category == category)
     
@@ -223,14 +269,31 @@ async def deploy_policy(
     db: Session = Depends(get_db)
 ):
     """
-    Deploy a policy to a cluster.
+    Deploy a policy to its associated cluster.
+    The cluster_id is taken from the policy, or can be overridden in the request.
     """
-    # Get policy and cluster
+    # Get policy
     policy = db.query(Policy).filter(Policy.id == request.policy_id).first()
     if not policy:
         raise HTTPException(status_code=404, detail="Policy not found")
     
-    cluster = db.query(Cluster).filter(Cluster.id == request.cluster_id).first()
+    # Use policy's cluster_id if not specified in request
+    target_cluster_id = request.cluster_id if request.cluster_id else policy.cluster_id
+    
+    if not target_cluster_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Policy has no cluster_id and none was provided in request"
+        )
+    
+    # Validate that if cluster_id is provided, it matches the policy's cluster
+    if request.cluster_id and policy.cluster_id and request.cluster_id != policy.cluster_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Policy belongs to cluster {policy.cluster_id}, cannot deploy to cluster {request.cluster_id}"
+        )
+    
+    cluster = db.query(Cluster).filter(Cluster.id == target_cluster_id).first()
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
     
@@ -249,7 +312,7 @@ async def deploy_policy(
     
     # Create deployment record
     deployment = PolicyDeployment(
-        cluster_id=request.cluster_id,
+        cluster_id=target_cluster_id,
         policy_id=request.policy_id,
         namespace=request.namespace,
         status="pending",
@@ -259,14 +322,59 @@ async def deploy_policy(
     db.commit()
     db.refresh(deployment)
     
+    # Get service account token for cluster
+    sa_token = db.query(ServiceAccountToken).filter(
+        ServiceAccountToken.cluster_id == target_cluster_id,
+        ServiceAccountToken.is_active == True
+    ).first()
+    
+    if not sa_token or not cluster.server_url:
+        deployment.status = "failed"
+        deployment.error_message = "Cluster missing credentials. Please run cluster setup first."
+        db.commit()
+        raise HTTPException(
+            status_code=400,
+            detail="Cluster missing credentials. Please run cluster setup first."
+        )
+    
     # Connect to cluster and deploy
     connector = get_k8s_connector()
     
     try:
-        connector.load_cluster(
-            kubeconfig_path=cluster.kubeconfig_path,
-            context=cluster.context
-        )
+        # Create kubeconfig with token
+        import yaml
+        cluster_config = {
+            "server": cluster.server_url,
+            "insecure-skip-tls-verify": not cluster.verify_ssl
+        }
+        if cluster.verify_ssl and cluster.ca_cert_data:
+            cluster_config["certificate-authority-data"] = cluster.ca_cert_data
+        
+        kubeconfig = {
+            "apiVersion": "v1",
+            "kind": "Config",
+            "clusters": [{
+                "name": "cluster",
+                "cluster": cluster_config
+            }],
+            "users": [{
+                "name": "user",
+                "user": {
+                    "token": sa_token.token
+                }
+            }],
+            "contexts": [{
+                "name": "context",
+                "context": {
+                    "cluster": "cluster",
+                    "user": "user"
+                }
+            }],
+            "current-context": "context"
+        }
+        
+        kubeconfig_content = yaml.dump(kubeconfig)
+        connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
         
         result = connector.apply_yaml(yaml_content, namespace=request.namespace)
         
