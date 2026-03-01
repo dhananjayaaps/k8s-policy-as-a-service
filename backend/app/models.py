@@ -15,6 +15,7 @@ class Cluster(Base):
     context = Column(String(255), nullable=True)
     server_url = Column(String(500), nullable=True)  # API server URL for token auth
     ca_cert_data = Column(Text, nullable=True)  # CA certificate base64 for token auth
+    verify_ssl = Column(Boolean, default=False)  # SSL certificate verification (False for dev/self-signed)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -51,7 +52,8 @@ class Policy(Base):
     __tablename__ = "policies"
     
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), unique=True, nullable=False)
+    cluster_id = Column(Integer, ForeignKey("clusters.id"), nullable=True)  # Cluster-specific policy
+    name = Column(String(255), nullable=False)
     category = Column(String(100), nullable=True)  # e.g., "security", "best-practices"
     description = Column(Text, nullable=True)
     yaml_template = Column(Text, nullable=False)
@@ -60,6 +62,7 @@ class Policy(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
+    cluster = relationship("Cluster")
     deployments = relationship("PolicyDeployment", back_populates="policy")
 
 

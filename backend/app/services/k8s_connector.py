@@ -12,6 +12,10 @@ import logging
 import subprocess
 import json
 import tempfile
+import urllib3
+
+# Disable SSL warnings when verify_ssl=False
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +70,11 @@ class K8sConnector:
             # Load the kubeconfig from temp file
             config.load_kube_config(config_file=temp_path, context=context)
             
-            self._api_client = client.ApiClient()
+            # Set API timeout for faster responses
+            configuration = client.Configuration.get_default_copy()
+            configuration.timeout = 10  # 10 second timeout per API call
+            
+            self._api_client = client.ApiClient(configuration)
             self._current_kubeconfig = temp_path
             self._temp_kubeconfig = temp_path
             self._current_context = context
@@ -237,7 +245,6 @@ class K8sConnector:
             Dictionary with result information
         """
         import yaml
-        from kubernetes import utils
         
         if not self._api_client:
             raise RuntimeError("Not connected to any cluster. Call load_cluster first.")
@@ -251,14 +258,113 @@ class K8sConnector:
                 continue
             
             try:
-                # Use kubernetes utils to create from dict
-                result = utils.create_from_dict(self._api_client, manifest, namespace=namespace)
-                results.append({
-                    "kind": manifest.get("kind"),
-                    "name": manifest.get("metadata", {}).get("name"),
-                    "status": "created",
-                })
+                kind = manifest.get("kind", "")
+                api_version = manifest.get("apiVersion", "")
+                metadata = manifest.get("metadata", {})
+                name = metadata.get("name")
+                
+                # Check if this is a Kyverno policy (custom resource)
+                if "kyverno.io" in api_version and kind in ["ClusterPolicy", "Policy"]:
+                    custom_api = client.CustomObjectsApi(self._api_client)
+                    
+                    # Extract group and version from apiVersion
+                    if "/" in api_version:
+                        group, version = api_version.split("/")
+                    else:
+                        group = api_version
+                        version = "v1"
+                    
+                    if kind == "ClusterPolicy":
+                        # Create ClusterPolicy (cluster-scoped)
+                        custom_api.create_cluster_custom_object(
+                            group=group,
+                            version=version,
+                            plural="clusterpolicies",
+                            body=manifest
+                        )
+                    else:
+                        # Create Policy (namespace-scoped)
+                        custom_api.create_namespaced_custom_object(
+                            group=group,
+                            version=version,
+                            namespace=namespace,
+                            plural="policies",
+                            body=manifest
+                        )
+                    
+                    results.append({
+                        "kind": kind,
+                        "name": name,
+                        "status": "created",
+                    })
+                else:
+                    # Use standard kubernetes utils for native resources
+                    from kubernetes import utils
+                    result = utils.create_from_dict(self._api_client, manifest, namespace=namespace)
+                    results.append({
+                        "kind": kind,
+                        "name": name,
+                        "status": "created",
+                    })
+                    
             except ApiException as e:
+                # If resource already exists, try to update it
+                if e.status == 409:  # Conflict - resource already exists
+                    try:
+                        if "kyverno.io" in api_version and kind in ["ClusterPolicy", "Policy"]:
+                            custom_api = client.CustomObjectsApi(self._api_client)
+                            
+                            if "/" in api_version:
+                                group, version = api_version.split("/")
+                            else:
+                                group = api_version
+                                version = "v1"
+                            
+                            if kind == "ClusterPolicy":
+                                custom_api.replace_cluster_custom_object(
+                                    group=group,
+                                    version=version,
+                                    plural="clusterpolicies",
+                                    name=name,
+                                    body=manifest
+                                )
+                            else:
+                                custom_api.replace_namespaced_custom_object(
+                                    group=group,
+                                    version=version,
+                                    namespace=namespace,
+                                    plural="policies",
+                                    name=name,
+                                    body=manifest
+                                )
+                            
+                            results.append({
+                                "kind": kind,
+                                "name": name,
+                                "status": "updated",
+                            })
+                        else:
+                            results.append({
+                                "kind": kind,
+                                "name": name,
+                                "status": "failed",
+                                "error": "Resource already exists",
+                            })
+                    except Exception as update_error:
+                        results.append({
+                            "kind": kind,
+                            "name": name,
+                            "status": "failed",
+                            "error": f"Update failed: {str(update_error)}",
+                        })
+                else:
+                    results.append({
+                        "kind": kind,
+                        "name": name,
+                        "status": "failed",
+                        "error": str(e),
+                    })
+            except Exception as e:
                 results.append({
                     "kind": manifest.get("kind"),
                     "name": manifest.get("metadata", {}).get("name"),
@@ -652,14 +758,18 @@ class K8sConnector:
             result["installed"] = True
             result["namespace"] = "kyverno"
         
-        # Method 2: Check deployments
+        # Method 2: Check deployments (check only kyverno namespace first)
         apps_v1 = client.AppsV1Api(self._api_client)
         v1 = client.CoreV1Api(self._api_client)
         
-        # Check common Kyverno namespaces
-        for ns in ["kyverno", "kyverno-system"]:
+        # Start with most common namespace
+        namespaces_to_check = ["kyverno"] if not result["installed"] else [result["namespace"]]
+        if not result["installed"]:
+            namespaces_to_check.append("kyverno-system")
+        
+        for ns in namespaces_to_check:
             try:
-                deployments = apps_v1.list_namespaced_deployment(namespace=ns)
+                deployments = apps_v1.list_namespaced_deployment(namespace=ns, limit=10)
                 for dep in deployments.items:
                     if "kyverno" in dep.metadata.name:
                         result["installed"] = True
@@ -678,6 +788,9 @@ class K8sConnector:
                             "replicas": dep.status.replicas or 0,
                             "available": dep.status.available_replicas or 0,
                         }
+                        break  # Found Kyverno, no need to check more deployments
+                if result["installed"]:
+                    break  # Found in this namespace, skip other namespaces
             except ApiException as e:
                 if e.status != 404:
                     logger.warning(f"Error checking namespace {ns}: {e}")
@@ -697,26 +810,27 @@ class K8sConnector:
             if e.status != 404:
                 logger.warning(f"Error checking Kyverno CRDs: {e}")
         
-        # Method 4: Check for webhooks
-        try:
-            admissionreg_v1 = client.AdmissionregistrationV1Api(self._api_client)
-            
-            # Check validating webhooks
-            validating_webhooks = admissionreg_v1.list_validating_webhook_configuration()
-            for webhook in validating_webhooks.items:
-                if "kyverno" in webhook.metadata.name.lower():
-                    result["webhooks_configured"] = True
-                    break
-            
-            # Check mutating webhooks if not found yet
-            if not result["webhooks_configured"]:
-                mutating_webhooks = admissionreg_v1.list_mutating_webhook_configuration()
-                for webhook in mutating_webhooks.items:
+        # Method 4: Check for webhooks (only if Kyverno is installed)
+        if result["installed"]:
+            try:
+                admissionreg_v1 = client.AdmissionregistrationV1Api(self._api_client)
+                
+                # Check validating webhooks (limit results)
+                validating_webhooks = admissionreg_v1.list_validating_webhook_configuration(limit=20)
+                for webhook in validating_webhooks.items:
                     if "kyverno" in webhook.metadata.name.lower():
                         result["webhooks_configured"] = True
                         break
-        except ApiException as e:
-            logger.warning(f"Error checking webhooks: {e}")
+                
+                # Check mutating webhooks if not found yet
+                if not result["webhooks_configured"]:
+                    mutating_webhooks = admissionreg_v1.list_mutating_webhook_configuration(limit=20)
+                    for webhook in mutating_webhooks.items:
+                        if "kyverno" in webhook.metadata.name.lower():
+                            result["webhooks_configured"] = True
+                            break
+            except ApiException as e:
+                logger.warning(f"Error checking webhooks: {e}")
         
         return result
     

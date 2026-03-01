@@ -65,12 +65,42 @@ curl -X POST http://localhost:8001/clusters/setup \
     "namespace": "kyverno",
     "role_type": "cluster-admin",
     "install_kyverno": true,
-    "kyverno_namespace": "kyverno"
+    "kyverno_namespace": "kyverno",
+    "verify_ssl": false
   }'
 # Response: Complete cluster details with token and Kyverno status
 
 # 3. Disconnect SSH (cleanup)
 curl -X POST "http://localhost:8001/clusters/ssh/disconnect?session_id=abc-123-..."
+
+# Note: If you set install_kyverno=false during setup, you can install Kyverno later:
+# Option A - Install via saved token (no SSH needed):
+curl -X POST http://localhost:8001/clusters/1/install-kyverno \
+  -H "Content-Type: application/json" \
+  -d '{
+    "namespace": "kyverno",
+    "release_name": "kyverno",
+    "create_namespace": true
+  }'
+
+# Option B - Install via SSH session:
+curl -X POST http://localhost:8001/clusters/ssh/kyverno/install \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "abc-123-...",
+    "namespace": "kyverno",
+    "release_name": "kyverno",
+    "create_namespace": true
+  }'
+
+# Option C - Install via direct cluster endpoint:
+curl -X POST http://localhost:8001/clusters/1/kyverno/install \
+  -H "Content-Type: application/json" \
+  -d '{
+    "namespace": "kyverno",
+    "release_name": "kyverno",
+    "create_namespace": true
+  }'
 ```
 
 **That's it!** Your cluster is now ready with a service account token saved in the database.
@@ -275,8 +305,9 @@ One-stop endpoint that sets up everything: service account, token, database entr
 - `service_account_name`: Name for the service account (default: "kyverno-admin")
 - `namespace`: Namespace for service account (default: "kyverno")
 - `role_type`: RBAC role - "view", "edit", "admin", "cluster-admin", "custom" (default: "cluster-admin")
-- `install_kyverno`: Whether to install Kyverno (default: false)
+- `install_kyverno`: Whether to install Kyverno during setup (default: false)
 - `kyverno_namespace`: Namespace for Kyverno (default: "kyverno")
+- `verify_ssl`: Verify SSL certificates (default: false, recommended for IP replacement/self-signed certs)
 
 **Response:**
 ```json
@@ -298,14 +329,53 @@ One-stop endpoint that sets up everything: service account, token, database entr
 **What This Does:**
 1. ✅ Creates service account with token on remote cluster
 2. ✅ Saves cluster to database with public IP
-3. ✅ Saves service account token to database
-4. ✅ Optionally installs Kyverno via Helm
+3. ✅ Saves service account token to datab (if `install_kyverno: true`)
 5. ✅ Creates audit logs for all operations
 
 **Benefits:**
 - Single API call for complete setup
 - Token saved for future use (no SSH needed later)
 - Multi-user safe with session isolation
+- Automated Kyverno installation
+- SSL verification configurable for development/production
+
+**If You Skipped Kyverno Installation:**
+
+If you set `install_kyverno: false` during setup, you can install Kyverno later using one of these methods:
+
+1. **Via saved token (Recommended - No SSH needed):**
+   ```bash
+   curl -X POST http://localhost:8001/clusters/{cluster_id}/install-kyverno \
+     -H "Content-Type: application/json" \
+     -d '{
+       "namespace": "kyverno",
+       "release_name": "kyverno",
+       "create_namespace": true
+     }'
+   ```
+
+2. **Via SSH session (if still connected):**
+   ```bash
+   curl -X POST http://localhost:8001/clusters/ssh/kyverno/install \
+     -H "Content-Type: application/json" \
+     -d '{
+       "session_id": "your-session-id",
+       "namespace": "kyverno",
+       "release_name": "kyverno",
+       "create_namespace": true
+     }'
+   ```
+
+3. **Via direct cluster endpoint (uses saved credentials):**
+   ```bash
+   curl -X POST http://localhost:8001/clusters/{cluster_id}/kyverno/install \
+     -H "Content-Type: application/json" \
+     -d '{
+       "namespace": "kyverno",
+       "release_name": "kyverno",
+       "create_namespace": true
+     }'
+   ```solation
 - Automated Kyverno installation
 
 ---
@@ -528,7 +598,6 @@ Install Kyverno using a saved service account token (no SSH needed).
 **Request Body:**
 ```json
 {
-  "cluster_id": 1,
   "service_account_id": 1,
   "namespace": "kyverno",
   "release_name": "kyverno",
@@ -537,7 +606,11 @@ Install Kyverno using a saved service account token (no SSH needed).
 ```
 
 **Parameters:**
+- `cluster_id`: In URL path - identifies which cluster to install on
 - `service_account_id`: Optional - uses first active token if not provided
+- `namespace`: Namespace to install Kyverno (default: "kyverno")
+- `release_name`: Helm release name (default: "kyverno")
+- `create_namespace`: Create namespace if it doesn't exist (default: true)
 
 **Response:**
 ```json
@@ -638,42 +711,20 @@ Create a service account with a token on a remote cluster.
 
 ## Policy Management
 
-### List Policies
+### Create Policy
 
-Get all available Kyverno policy templates.
+Create a new Kyverno policy template for a specific cluster.
 
-**Endpoint:** `GET /policies`
-
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "name": "require-labels",
-    "category": "best-practices",
-    "description": "Require specific labels on all resources",
-    "yaml_template": "apiVersion: kyverno.io/v1\nkind: ClusterPolicy\n...",
-    "created_at": "2026-03-01T09:00:00"
-  }
-]
-```
-
----
-
-### Deploy Policy
-
-Deploy a policy to a cluster.
-
-**Endpoint:** `POST /policies/{policy_id}/deploy`
+**Endpoint:** `POST /policies/`
 
 **Request Body:**
 ```json
 {
+  "name": "require-labels",
   "cluster_id": 1,
-  "namespace": "default",
-  "parameters": {
-    "required_labels": ["app", "env", "owner"]
-  }
+  "category": "best-practices",
+  "description": "Require specific labels on all resources",
+  "yaml_template": "apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: require-labels\nspec:\n  validationFailureAction: Enforce\n  rules:\n  - name: check-labels\n    match:\n      any:\n      - resources:\n          kinds:\n          - Pod\n    validate:\n      message: \"Labels app and env are required\"\n      pattern:\n        metadata:\n          labels:\n            app: \"?*\"\n            env: \"?*\""
 }
 ```
 
@@ -681,11 +732,249 @@ Deploy a policy to a cluster.
 ```json
 {
   "id": 1,
-  "policy_id": 1,
+  "name": "require-labels",
   "cluster_id": 1,
+  "category": "best-practices",
+  "description": "Require specific labels on all resources",
+  "yaml_template": "apiVersion: kyverno.io/v1\nkind: ClusterPolicy\n...",
+  "created_at": "2026-03-01T09:00:00",
+  "updated_at": "2026-03-01T09:00:00"
+}
+```
+
+**Notes:**
+- Policies are cluster-specific - each policy belongs to one cluster
+- Policy names must be unique within a cluster (can have same name in different clusters)
+- The `cluster_id` must reference an existing cluster
+
+---
+
+### List All Policies
+
+Get all policy templates, optionally filtered by cluster or category.
+
+**Endpoint:** `GET /policies?cluster_id={cluster_id}&category={category}&skip=0&limit=100`
+
+**Query Parameters:**
+- `cluster_id` (optional): Filter policies for a specific cluster
+- `category` (optional): Filter by category (e.g., "security", "best-practices")
+- `skip` (optional): Number of records to skip (default: 0)
+- `limit` (optional): Maximum records to return (default: 100)
+
+**Response:**
+```json
+[
+  {
+    "id": 1,
+    "name": "require-labels",
+    "cluster_id": 1,
+    "category": "best-practices",
+    "description": "Require specific labels on all resources",
+    "yaml_template": "apiVersion: kyverno.io/v1\nkind: ClusterPolicy\n...",
+    "created_at": "2026-03-01T09:00:00",
+    "updated_at": "2026-03-01T09:00:00"
+  }
+]
+```
+
+---
+
+### List Cluster Policies
+
+Get all policies for a specific cluster.
+
+**Endpoint:** `GET /policies/cluster/{cluster_id}?category={category}&skip=0&limit=100`
+
+**Path Parameters:**
+- `cluster_id`: ID of the cluster
+
+**Query Parameters:**
+- `category` (optional): Filter by category
+- `skip` (optional): Number of records to skip (default: 0)
+- `limit` (optional): Maximum records to return (default: 100)
+
+**Response:**
+```json
+[
+  {
+    "id": 1,
+    "name": "require-labels",
+    "cluster_id": 1,
+    "category": "best-practices",
+    "description": "Require specific labels on all resources",
+    "yaml_template": "apiVersion: kyverno.io/v1\nkind: ClusterPolicy\n...",
+    "created_at": "2026-03-01T09:00:00",
+    "updated_at": "2026-03-01T09:00:00"
+  },
+  {
+    "id": 2,
+    "name": "disallow-privileged",
+    "cluster_id": 1,
+    "category": "security",
+    "description": "Prevent privileged containers",
+    "yaml_template": "apiVersion: kyverno.io/v1\nkind: ClusterPolicy\n...",
+    "created_at": "2026-03-01T09:15:00",
+    "updated_at": "2026-03-01T09:15:00"
+  }
+]
+```
+
+---
+
+### Get Policy by ID
+
+Get a specific policy template by ID.
+
+**Endpoint:** `GET /policies/{policy_id}`
+
+**Response:**
+```json
+{
+  "id": 1,
+  "name": "require-labels",
+  "cluster_id": 1,
+  "category": "best-practices",
+  "description": "Require specific labels on all resources",
+  "yaml_template": "apiVersion: kyverno.io/v1\nkind: ClusterPolicy\n...",
+  "created_at": "2026-03-01T09:00:00",
+  "updated_at": "2026-03-01T09:00:00"
+}
+```
+
+---
+
+### Update Policy
+
+Update an existing policy template.
+
+**Endpoint:** `PUT /policies/{policy_id}`
+
+**Request Body:**
+```json
+{
+  "name": "require-labels-updated",
+  "description": "Updated description",
+  "yaml_template": "apiVersion: kyverno.io/v1\n..."
+}
+```
+
+**Response:**
+```json
+{
+  "id": 1,
+  "name": "require-labels-updated",
+  "cluster_id": 1,
+  "category": "best-practices",
+  "description": "Updated description",
+  "yaml_template": "apiVersion: kyverno.io/v1\n...",
+  "created_at": "2026-03-01T09:00:00",
+  "updated_at": "2026-03-01T10:30:00"
+}
+```
+
+---
+
+### Delete Policy
+
+Delete a policy template. Cannot delete policies with active deployments.
+
+**Endpoint:** `DELETE /policies/{policy_id}`
+
+**Response:**
+```json
+{
+  "message": "Policy 'require-labels' deleted"
+}
+```
+
+---
+
+### Deploy Policy
+
+Deploy a policy to its associated cluster using saved service account token.
+
+**Endpoint:** `POST /policies/deploy`
+
+**Request Body:**
+```json
+{
+  "policy_id": 1,
   "namespace": "default",
-  "status": "deployed",
-  "deployed_at": "2026-03-01T11:00:00"
+  "parameters": {
+    "required_labels": ["app", "env", "owner"]
+  }
+}
+```
+
+**Parameters:**
+- `policy_id`: ID of the policy to deploy (required)
+- `cluster_id`: Optional - uses policy's cluster_id if not specified
+- `namespace`: Kubernetes namespace to deploy to (default: "default")
+- `parameters`: Optional parameters for template rendering
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Policy 'require-labels' deployed to cluster 'production-cluster'",
+  "deployment_id": 1,
+  "deployed_yaml": "apiVersion: kyverno.io/v1\nkind: ClusterPolicy\n..."
+}
+```
+
+**How It Works:**
+1. Retrieves the policy and its associated cluster from database
+2. Uses the cluster's saved service account token for authentication
+3. Renders policy template with provided parameters (if any)
+4. Deploys to the cluster using Kubernetes API
+5. Creates deployment record and audit log
+
+**Benefits:**
+- No SSH connection required
+- No kubeconfig file needed
+- Uses stored credentials automatically
+- Works from anywhere with API access
+- Respects cluster's `verify_ssl` setting
+
+---
+
+### List Policy Deployments
+
+Get all deployments for a specific cluster.
+
+**Endpoint:** `GET /policies/deployments/cluster/{cluster_id}`
+
+**Response:**
+```json
+[
+  {
+    "id": 1,
+    "cluster_id": 1,
+    "policy_id": 1,
+    "namespace": "default",
+    "status": "deployed",
+    "deployed_yaml": "apiVersion: kyverno.io/v1\n...",
+    "error_message": null,
+    "deployed_at": "2026-03-01T11:00:00",
+    "created_at": "2026-03-01T11:00:00",
+    "updated_at": "2026-03-01T11:00:00"
+  }
+]
+```
+
+---
+
+### Remove Policy Deployment
+
+Remove a deployed policy from the cluster.
+
+**Endpoint:** `DELETE /policies/deployments/{deployment_id}`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Policy deployment removed successfully"
 }
 ```
 
@@ -791,23 +1080,44 @@ echo "Token saved to database"
 
 # 3. Verify Kyverno status
 echo "Checking Kyverno status..."
-curl -s "$API_URL/clusters/kyverno/status" | jq '.'
+curl -s "$API_URL/clusters/$CLUSTER_ID/kyverno/status" | jq '.'
 
-# 4. Deploy a policy
-echo "Deploying policy..."
-curl -s -X POST "$API_URL/policies/1/deploy" \
+# 4. Create a cluster-specific policy
+echo "Creating policy for cluster..."
+POLICY_RESPONSE=$(curl -s -X POST "$API_URL/policies/" \
   -H "Content-Type: application/json" \
   -d '{
+    "name": "require-labels",
     "cluster_id": '"$CLUSTER_ID"',
-    "namespace": "default",
-    "parameters": {}
+    "category": "best-practices",
+    "description": "Require app and env labels on all pods",
+    "yaml_template": "apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: require-labels\nspec:\n  validationFailureAction: Enforce\n  rules:\n  - name: check-labels\n    match:\n      any:\n      - resources:\n          kinds:\n          - Pod\n    validate:\n      message: \"Labels app and env are required\"\n      pattern:\n        metadata:\n          labels:\n            app: \"?*\"\n            env: \"?*\""
+  }')
+
+POLICY_ID=$(echo $POLICY_RESPONSE | jq -r '.id')
+echo "Policy ID: $POLICY_ID"
+
+# 5. Deploy the policy (uses cluster's saved token automatically)
+echo "Deploying policy to cluster..."
+curl -s -X POST "$API_URL/policies/deploy" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "policy_id": '"$POLICY_ID"',
+    "namespace": "default"
   }' | jq '.'
 
-# 5. Disconnect SSH
+# 6. List all policies for this cluster
+echo "Listing cluster policies..."
+curl -s "$API_URL/policies/cluster/$CLUSTER_ID" | jq '.'
+
+# 7. Disconnect SSH
 echo "Disconnecting SSH..."
 curl -s -X POST "$API_URL/clusters/ssh/disconnect?session_id=$SESSION_ID"
 
 echo "Setup complete!"
+echo "- Cluster ID: $CLUSTER_ID"
+echo "- Policy ID: $POLICY_ID"
+echo "- Token saved in database for future use"
 ```
 
 ---

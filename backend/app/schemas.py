@@ -8,7 +8,7 @@ from datetime import datetime
 class ClusterBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     host: Optional[str] = Field(None, description="Public IP or hostname")
-    kubeconfig_content: str = Field(..., description="Kubeconfig YAML content")
+    kubeconfig_content: Optional[str] = Field(None, description="Kubeconfig YAML content (optional for token-based auth)")
     context: Optional[str] = None
     description: Optional[str] = None
 
@@ -60,6 +60,7 @@ class NamespaceListResponse(BaseModel):
 
 class PolicyBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
+    cluster_id: int = Field(..., description="ID of the cluster this policy belongs to")
     category: Optional[str] = None
     description: Optional[str] = None
     yaml_template: str
@@ -72,6 +73,7 @@ class PolicyCreate(PolicyBase):
 
 class PolicyUpdate(BaseModel):
     name: Optional[str] = None
+    cluster_id: Optional[int] = None
     category: Optional[str] = None
     description: Optional[str] = None
     yaml_template: Optional[str] = None
@@ -80,6 +82,7 @@ class PolicyUpdate(BaseModel):
 
 class PolicyResponse(PolicyBase):
     id: int
+    cluster_id: int
     created_at: datetime
     updated_at: datetime
     
@@ -89,8 +92,8 @@ class PolicyResponse(PolicyBase):
 
 class PolicyDeployRequest(BaseModel):
     """Request to deploy a policy to a cluster"""
-    cluster_id: int
     policy_id: int
+    cluster_id: Optional[int] = Field(None, description="Cluster ID (uses policy's cluster if not specified)")
     namespace: str = "default"
     parameters: Optional[Dict[str, Any]] = None
 
@@ -325,6 +328,7 @@ class ClusterSetupRequest(BaseModel):
     role_type: str = Field(default="cluster-admin", description="Role type for the service account")
     install_kyverno: bool = Field(default=False, description="Install Kyverno after setup")
     kyverno_namespace: str = Field(default="kyverno", description="Namespace for Kyverno installation")
+    verify_ssl: bool = Field(default=False, description="Verify SSL certificates (False recommended for IP replacement/self-signed certs)")
     
     # Public API access configuration
     public_api_url: Optional[str] = Field(
@@ -356,10 +360,8 @@ class ClusterSetupResponse(BaseModel):
 
 class KyvernoInstallViaTokenRequest(BaseModel):
     """Install Kyverno using service account token"""
-    cluster_id: int = Field(..., description="Cluster ID from database")
     service_account_id: Optional[int] = Field(None, description="Service account token ID (uses cluster's first token if not provided)")
     namespace: str = Field(default="kyverno", description="Namespace to install Kyverno")
     release_name: str = Field(default="kyverno", description="Helm release name")
     create_namespace: bool = Field(default=True, description="Create namespace if it doesn't exist")
 
-    verify_ssl: bool = Field(default=True, description="Verify SSL certificates")
