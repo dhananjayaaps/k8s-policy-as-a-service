@@ -3,7 +3,7 @@
 // It can switch between mock data and real REST endpoints via config.
 
 import { API_CONFIG, getApiUrl } from './config';
-import type { Cluster, Policy, AuditLog, ComplianceMetric } from '../types';
+import type { Cluster, Policy, AuditLog, ComplianceMetric, User, LoginRequest, SignupRequest, AuthResponse } from '../types';
 
 // Import mock data
 import mockClusters from '../data/mock/clusters.json';
@@ -18,24 +18,55 @@ export type ApiResponse<T> = {
   status: number;
 };
 
+// Get token from localStorage (client-side only)
+function getAuthToken(): string | null {
+  if (typeof window !== 'undefined') {
+    return localStorage.getItem('auth_token');
+  }
+  return null;
+}
+
 // Simulate network delay for mock data (makes UI feel more realistic)
 const simulateDelay = (ms: number = 300) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Generic fetch wrapper with error handling
-async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<ApiResponse<T>> {
+async function fetchApi<T>(endpoint: string, options?: RequestInit, customToken?: string): Promise<ApiResponse<T>> {
   try {
+    const token = customToken || getAuthToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options?.headers as Record<string, string> || {}),
+    };
+    
+    // Add Authorization header if token exists
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    
     const response = await fetch(getApiUrl(endpoint), {
       ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options?.headers,
-      },
+      headers,
     });
 
     if (!response.ok) {
+      let errorMessage = `HTTP Error: ${response.status} ${response.statusText}`;
+      
+      // Try to parse error response
+      try {
+        const errorData = await response.json();
+        // Handle FastAPI validation errors (array of error objects)
+        if (Array.isArray(errorData.detail)) {
+          errorMessage = errorData.detail.map((err: any) => err.msg).join(', ');
+        } else if (typeof errorData.detail === 'string') {
+          errorMessage = errorData.detail;
+        }
+      } catch {
+        // Ignore parse errors
+      }
+      
       return {
         data: null,
-        error: `HTTP Error: ${response.status} ${response.statusText}`,
+        error: errorMessage,
         status: response.status,
       };
     }
@@ -49,6 +80,102 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<Api
       status: 500,
     };
   }
+}
+
+// ============== Authentication API ==============
+
+export async function login(credentials: LoginRequest): Promise<ApiResponse<AuthResponse>> {
+  // Auth endpoints always use real API, never mock
+  try {
+    const response = await fetch(getApiUrl('/auth/login'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(credentials),
+    });
+
+    if (!response.ok) {
+      let errorMessage = 'Login failed';
+      try {
+        const errorData = await response.json();
+        // Handle FastAPI validation errors (array of error objects)
+        if (Array.isArray(errorData.detail)) {
+          errorMessage = errorData.detail.map((err: any) => err.msg).join(', ');
+        } else if (typeof errorData.detail === 'string') {
+          errorMessage = errorData.detail;
+        }
+      } catch {
+        // Ignore parse errors
+      }
+      return {
+        data: null,
+        error: errorMessage,
+        status: response.status,
+      };
+    }
+
+    const data = await response.json();
+    return { data, error: null, status: response.status };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : 'Login failed',
+      status: 500,
+    };
+  }
+}
+
+export async function signup(data: SignupRequest): Promise<ApiResponse<User>> {
+  // Auth endpoints always use real API, never mock
+  try {
+    const response = await fetch(getApiUrl('/auth/signup'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      let errorMessage = 'Signup failed';
+      try {
+        const errorData = await response.json();
+        // Handle FastAPI validation errors (array of error objects)
+        if (Array.isArray(errorData.detail)) {
+          errorMessage = errorData.detail.map((err: any) => err.msg).join(', ');
+        } else if (typeof errorData.detail === 'string') {
+          errorMessage = errorData.detail;
+        }
+      } catch {
+        // Ignore parse errors
+      }
+      return {
+        data: null,
+        error: errorMessage,
+        status: response.status,
+      };
+    }
+
+    const userData = await response.json();
+    return { data: userData, error: null, status: response.status };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : 'Signup failed',
+      status: 500,
+    };
+  }
+}
+
+export async function getCurrentUser(token: string): Promise<ApiResponse<User>> {
+  // Auth endpoints always use real API, never mock
+  return fetchApi<User>('/auth/me', {}, token);
+}
+
+export async function getAllUsers(token: string): Promise<ApiResponse<User[]>> {
+  // Admin only - always use real API
+  return fetchApi<User[]>('/auth/users', {}, token);
 }
 
 // ============== Clusters API ==============

@@ -8,6 +8,7 @@ import Marketplace from '@/src/views/Marketplace';
 import Sandbox from '@/src/views/Sandbox';
 import AuditLogs from '@/src/views/AuditLogs';
 import Settings from '@/src/views/Settings';
+import ProtectedRoute from '@/src/components/ProtectedRoute';
 import { getClusters } from '@/src/lib/api';
 import type { Cluster } from '@/src/types';
 
@@ -53,18 +54,20 @@ export default function Home() {
   };
 
   return (
-    <div className="flex min-h-screen bg-slate-100">
-      <Sidebar activeView={activeView} onViewChange={handleViewChange} />
-      <div className="flex-1 flex flex-col">
-        <Header
-          selectedCluster={selectedCluster}
-          clusters={clusters}
-          onClusterChange={setSelectedCluster}
-        />
-        <main className="flex-1 overflow-auto">
-          {renderView()}
-        </main>
+    <ProtectedRoute>
+      <div className="flex min-h-screen bg-slate-100">
+        <Sidebar activeView={activeView} onViewChange={handleViewChange} />
+        <div className="flex-1 flex flex-col">
+          <Header
+            selectedCluster={selectedCluster}
+            clusters={clusters}
+            onClusterChange={setSelectedCluster}
+          />
+          <main className="flex-1 overflow-auto">
+            {renderView()}
+          </main>
+        </div>
       </div>
-    </div>
+    </ProtectedRoute>
   );
 }

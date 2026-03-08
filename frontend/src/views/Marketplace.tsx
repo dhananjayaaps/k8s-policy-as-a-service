@@ -60,8 +60,9 @@ export default function Marketplace() {
 
   const filteredPolicies = policies.filter((policy) => {
     const matchesCategory = filter === 'all' || policy.category === filter;
-    const matchesSearch = policy.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         policy.description.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = 
+      (policy.title?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+      (policy.description?.toLowerCase() || '').includes(searchQuery.toLowerCase());
     return matchesCategory && matchesSearch;
   });
 
@@ -125,8 +126,8 @@ export default function Marketplace() {
                   </div>
                   <div>
                     <h3 className="text-lg font-semibold text-slate-900">{policy.title}</h3>
-                    <span className={`inline-block px-2 py-1 text-xs font-medium rounded mt-1 ${severityColors[policy.severity]}`}>
-                      {policy.severity.toUpperCase()}
+                    <span className={`inline-block px-2 py-1 text-xs font-medium rounded mt-1 ${severityColors[policy.severity || 'low']}`}>
+                      {(policy.severity || 'low').toUpperCase()}
                     </span>
                   </div>
                 </div>

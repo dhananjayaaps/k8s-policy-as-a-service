@@ -1,6 +1,31 @@
 // Type definitions for the application
 // These types mirror the data structure and can be used with any backend
 
+export type User = {
+  id: number;
+  username: string;
+  role: 'admin' | 'user';
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LoginRequest = {
+  username: string;
+  password: string;
+};
+
+export type SignupRequest = {
+  username: string;
+  password: string;
+  role?: 'admin' | 'user';
+};
+
+export type AuthResponse = {
+  access_token: string;
+  token_type: string;
+};
+
 export type Cluster = {
   id: string;
   name: string;
