@@ -13,8 +13,9 @@ import os
 from pathlib import Path
 import yaml
 
-from app.db import init_db
-from app.routers import clusters, policies, reports
+from app.db import init_db, get_db
+from app.routers import clusters, policies, reports, auth
+from app.services.auth import create_default_admin
 
 # Configure logging
 logging.basicConfig(
@@ -56,11 +57,23 @@ async def startup_event():
     init_db()
     logger.info("Database initialized")
     
+    # Create default admin user if no users exist
+    from app.db import SessionLocal
+    db = SessionLocal()
+    try:
+        create_default_admin(db)
+    finally:
+        db.close()
+    
     logger.info(f"API v{API_VERSION} ready")
 
 
 # ============ Include Routers ============
 
+# Auth router (public endpoints)
+app.include_router(auth.router)
+
+# Protected routers (require authentication)
 app.include_router(clusters.router)
 app.include_router(policies.router)
 app.include_router(reports.router)

@@ -3,6 +3,43 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
+# ============ Authentication Schemas ============
+
+class UserBase(BaseModel):
+    username: str = Field(..., min_length=3, max_length=255)
+
+
+class UserCreate(UserBase):
+    password: str = Field(..., min_length=6)
+    role: str = Field(default="user", pattern="^(admin|user)$")
+
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+
+class UserResponse(UserBase):
+    id: int
+    role: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+    role: Optional[str] = None
+
+
 # ============ Cluster Schemas ============
 
 class ClusterBase(BaseModel):

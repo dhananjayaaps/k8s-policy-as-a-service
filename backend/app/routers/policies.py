@@ -8,9 +8,12 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime
+import logging
+import yaml
 
 from app.db import get_db
 from app.models import Policy, PolicyDeployment, Cluster, AuditLog, ServiceAccountToken
+from app.services.auth import get_current_user
 from app.schemas import (
     PolicyCreate,
     PolicyUpdate,
@@ -18,12 +21,18 @@ from app.schemas import (
     PolicyDeployRequest,
     PolicyDeployResponse,
     PolicyDeploymentResponse,
+    AuditLogResponse,
 )
 from app.services.k8s_connector import get_k8s_connector
 from app.services.template_engine import get_template_engine
 from app.services.validation_service import get_validation_service
 
-router = APIRouter(prefix="/policies", tags=["policies"])
+router = APIRouter(
+    prefix="/policies",
+    tags=["policies"],
+    dependencies=[Depends(get_current_user)]
+)
+logger = logging.getLogger(__name__)
 
 
 # ============ Policy CRUD ============
@@ -436,7 +445,12 @@ async def list_deployments(
     db: Session = Depends(get_db)
 ):
     """
-    List policy deployments.
+    List policy deployments with optional filters.
+    
+    Query Parameters:
+    - cluster_id: Filter by cluster ID
+    - policy_id: Filter by policy ID
+    - status: Filter by status (pending, deployed, failed, removed)
     """
     query = db.query(PolicyDeployment)
     
@@ -451,10 +465,42 @@ async def list_deployments(
     return deployments
 
 
+@router.get("/deployments/cluster/{cluster_id}", response_model=List[PolicyDeploymentResponse])
+async def list_cluster_deployments(
+    cluster_id: int,
+    status: str = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all policy deployments for a specific cluster.
+    
+    Path Parameters:
+    - cluster_id: ID of the cluster
+    
+    Query Parameters:
+    - status: Optional status filter (pending, deployed, failed, removed)
+    """
+    # Verify cluster exists
+    cluster = db.query(Cluster).filter(Cluster.id == cluster_id).first()
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+    
+    query = db.query(PolicyDeployment).filter(PolicyDeployment.cluster_id == cluster_id)
+    
+    if status:
+        query = query.filter(PolicyDeployment.status == status)
+    
+    # Order by most recent first
+    query = query.order_by(PolicyDeployment.created_at.desc())
+    
+    deployments = query.all()
+    return deployments
+
+
 @router.delete("/deployments/{deployment_id}")
 async def remove_deployment(deployment_id: int, db: Session = Depends(get_db)):
     """
-    Remove a deployed policy from a cluster.
+    Remove a deployed policy from a cluster using saved service account token.
     """
     deployment = db.query(PolicyDeployment).filter(
         PolicyDeployment.id == deployment_id
@@ -468,32 +514,106 @@ async def remove_deployment(deployment_id: int, db: Session = Depends(get_db)):
     cluster = db.query(Cluster).filter(Cluster.id == deployment.cluster_id).first()
     
     if deployment.status == "deployed" and policy and cluster:
-        # Try to delete from cluster
-        connector = get_k8s_connector()
-        try:
-            connector.load_cluster(
-                kubeconfig_path=cluster.kubeconfig_path,
-                context=cluster.context
-            )
-            connector.delete_policy(policy.name, namespace=deployment.namespace)
-        except Exception as e:
-            # Log warning but proceed with database deletion
-            pass
+        # Get service account token
+        sa_token = db.query(ServiceAccountToken).filter(
+            ServiceAccountToken.cluster_id == cluster.id,
+            ServiceAccountToken.is_active == True
+        ).first()
+        
+        if sa_token and cluster.server_url:
+            # Try to delete from cluster using token
+            connector = get_k8s_connector()
+            try:
+                cluster_config = {
+                    "server": cluster.server_url,
+                    "insecure-skip-tls-verify": not cluster.verify_ssl
+                }
+                if cluster.verify_ssl and cluster.ca_cert_data:
+                    cluster_config["certificate-authority-data"] = cluster.ca_cert_data
+                
+                kubeconfig = {
+                    "apiVersion": "v1",
+                    "kind": "Config",
+                    "clusters": [{"name": "cluster", "cluster": cluster_config}],
+                    "users": [{"name": "user", "user": {"token": sa_token.token}}],
+                    "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
+                    "current-context": "context"
+                }
+                
+                kubeconfig_content = yaml.dump(kubeconfig)
+                connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
+                connector.delete_policy(policy.name, namespace=deployment.namespace)
+            except Exception as e:
+                # Log warning but proceed with database deletion
+                logger.warning(f"Failed to delete policy from cluster: {e}")
     
+    # Update deployment status
     deployment.status = "removed"
+    deployment.updated_at = datetime.utcnow()
     db.commit()
     
-    return {"message": "Deployment removed"}
+    # Add audit log
+    audit = AuditLog(
+        action="policy_undeploy",
+        resource_type="policy_deployment",
+        resource_id=deployment.id,
+        details={
+            "policy_name": policy.name if policy else None,
+            "cluster_id": cluster.id if cluster else None,
+            "namespace": deployment.namespace
+        },
+        status="success"
+    )
+    db.add(audit)
+    db.commit()
+    
+    return {"success": True, "message": "Deployment removed"}
 
 
-@router.get("/kyverno-policies")
-async def list_kyverno_policies():
+@router.get("/cluster/{cluster_id}/kyverno-policies")
+async def list_kyverno_policies(cluster_id: int, db: Session = Depends(get_db)):
     """
-    List all Kyverno policies currently in the connected cluster.
+    List all Kyverno policies currently deployed in a specific cluster.
     """
+    cluster = db.query(Cluster).filter(Cluster.id == cluster_id).first()
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+    
+    # Get service account token
+    sa_token = db.query(ServiceAccountToken).filter(
+        ServiceAccountToken.cluster_id == cluster_id,
+        ServiceAccountToken.is_active == True
+    ).first()
+    
+    if not sa_token or not cluster.server_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Cluster missing credentials. Please run cluster setup first."
+        )
+    
     connector = get_k8s_connector()
     
     try:
+        import yaml
+        cluster_config = {
+            "server": cluster.server_url,
+            "insecure-skip-tls-verify": not cluster.verify_ssl
+        }
+        if cluster.verify_ssl and cluster.ca_cert_data:
+            cluster_config["certificate-authority-data"] = cluster.ca_cert_data
+        
+        kubeconfig = {
+            "apiVersion": "v1",
+            "kind": "Config",
+            "clusters": [{"name": "cluster", "cluster": cluster_config}],
+            "users": [{"name": "user", "user": {"token": sa_token.token}}],
+            "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
+            "current-context": "context"
+        }
+        
+        kubeconfig_content = yaml.dump(kubeconfig)
+        connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
+        
         policies = connector.list_kyverno_policies()
         return policies
     except RuntimeError as e:
@@ -502,4 +622,164 @@ async def list_kyverno_policies():
         raise HTTPException(
             status_code=500,
             detail=f"Failed to list Kyverno policies: {str(e)}"
+        )
+
+
+# ============ Audit Logs ============
+
+@router.get("/audit-logs", response_model=List[AuditLogResponse])
+async def get_audit_logs(
+    action: str = None,
+    resource_type: str = None,
+    status: str = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """
+    Get audit logs for policy operations.
+    
+    Query Parameters:
+    - action: Filter by action (e.g., policy_create, policy_deploy, policy_undeploy)
+    - resource_type: Filter by resource type (e.g., policy, policy_deployment)
+    - status: Filter by status (success, failure)
+    - skip: Number of records to skip
+    - limit: Maximum records to return
+    """
+    query = db.query(AuditLog)
+    
+    if action:
+        query = query.filter(AuditLog.action == action)
+    if resource_type:
+        query = query.filter(AuditLog.resource_type == resource_type)
+    if status:
+        query = query.filter(AuditLog.status == status)
+    
+    # Order by most recent first
+    query = query.order_by(AuditLog.created_at.desc())
+    
+    logs = query.offset(skip).limit(limit).all()
+    return logs
+
+
+@router.get("/cluster/{cluster_id}/policy-reports")
+async def get_cluster_policy_reports(cluster_id: int, db: Session = Depends(get_db)):
+    """
+    Get Kyverno PolicyReports for a specific cluster.
+    
+    This shows actual policy violations and pass/fail results from Kyverno.
+    """
+    cluster = db.query(Cluster).filter(Cluster.id == cluster_id).first()
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+    
+    # Get service account token
+    sa_token = db.query(ServiceAccountToken).filter(
+        ServiceAccountToken.cluster_id == cluster_id,
+        ServiceAccountToken.is_active == True
+    ).first()
+    
+    if not sa_token or not cluster.server_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Cluster missing credentials. Please run cluster setup first."
+        )
+    
+    connector = get_k8s_connector()
+    
+    try:
+        import yaml
+        
+        cluster_config = {
+            "server": cluster.server_url,
+            "insecure-skip-tls-verify": not cluster.verify_ssl
+        }
+        if cluster.verify_ssl and cluster.ca_cert_data:
+            cluster_config["certificate-authority-data"] = cluster.ca_cert_data
+        
+        kubeconfig = {
+            "apiVersion": "v1",
+            "kind": "Config",
+            "clusters": [{"name": "cluster", "cluster": cluster_config}],
+            "users": [{"name": "user", "user": {"token": sa_token.token}}],
+            "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
+            "current-context": "context"
+        }
+        
+        kubeconfig_content = yaml.dump(kubeconfig)
+        connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
+        
+        # Get policy reports from Kubernetes
+        from kubernetes import client
+        custom_api = client.CustomObjectsApi(connector.get_api_client())
+        
+        reports = []
+        
+        # Get ClusterPolicyReports
+        try:
+            cluster_reports = custom_api.list_cluster_custom_object(
+                group="wgpolicyk8s.io",
+                version="v1alpha2",
+                plural="clusterpolicyreports"
+            )
+            reports.extend(cluster_reports.get("items", []))
+        except Exception as e:
+            logger.warning(f"Failed to get ClusterPolicyReports: {e}")
+        
+        # Get PolicyReports from all namespaces
+        try:
+            v1 = client.CoreV1Api(connector.get_api_client())
+            namespaces = v1.list_namespace()
+            
+            for ns in namespaces.items:
+                try:
+                    ns_reports = custom_api.list_namespaced_custom_object(
+                        group="wgpolicyk8s.io",
+                        version="v1alpha2",
+                        namespace=ns.metadata.name,
+                        plural="policyreports"
+                    )
+                    for report in ns_reports.get("items", []):
+                        report["namespace"] = ns.metadata.name
+                        reports.append(report)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"Failed to get PolicyReports: {e}")
+        
+        # Parse and summarize reports
+        summary = {
+            "total_reports": len(reports),
+            "total_pass": 0,
+            "total_fail": 0,
+            "total_warn": 0,
+            "total_error": 0,
+            "total_skip": 0,
+            "reports": []
+        }
+        
+        for report in reports:
+            results = report.get("results", [])
+            report_summary = {
+                "name": report.get("metadata", {}).get("name"),
+                "namespace": report.get("namespace"),
+                "summary": report.get("summary", {}),
+                "results": results
+            }
+            
+            # Count results
+            summary["total_pass"] += report.get("summary", {}).get("pass", 0)
+            summary["total_fail"] += report.get("summary", {}).get("fail", 0)
+            summary["total_warn"] += report.get("summary", {}).get("warn", 0)
+            summary["total_error"] += report.get("summary", {}).get("error", 0)
+            summary["total_skip"] += report.get("summary", {}).get("skip", 0)
+            
+            summary["reports"].append(report_summary)
+        
+        return summary
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get policy reports: {str(e)}"
         )

@@ -10,11 +10,16 @@ from typing import Optional
 
 from app.db import get_db
 from app.models import Cluster, Policy, PolicyDeployment
+from app.services.auth import get_current_user
 from app.schemas import ComplianceReportRequest, ComplianceReportResponse
 from app.services.k8s_connector import get_k8s_connector
 from app.services.report_generator import get_report_generator
 
-router = APIRouter(prefix="/reports", tags=["reports"])
+router = APIRouter(
+    prefix="/reports",
+    tags=["reports"],
+    dependencies=[Depends(get_current_user)]
+)
 
 
 @router.post("/compliance")

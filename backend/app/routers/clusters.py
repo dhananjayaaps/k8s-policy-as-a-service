@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 
 from app.db import get_db
 from app.models import Cluster, AuditLog, ServiceAccountToken
+from app.services.auth import get_current_user
 from app.schemas import (
     ClusterCreate,
     ClusterUpdate,
@@ -58,7 +59,11 @@ from app.services.ssh_connector import (
     list_active_sessions
 )
 
-router = APIRouter(prefix="/clusters", tags=["clusters"])
+router = APIRouter(
+    prefix="/clusters",
+    tags=["clusters"],
+    dependencies=[Depends(get_current_user)]
+)
 
 
 # ============ Helper Functions ============
