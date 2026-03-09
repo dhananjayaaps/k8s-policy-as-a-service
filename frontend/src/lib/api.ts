@@ -247,12 +247,12 @@ export async function getAuditLogs(options?: {
 }): Promise<ApiResponse<AuditLog[]>> {
   if (API_CONFIG.useMockData) {
     await simulateDelay();
-    let logs = [...(mockAuditLogs as AuditLog[])];
+    let logs = [...(mockAuditLogs as any)] as AuditLog[];
     
-    // Sort by timestamp
+    // Sort by timestamp (mock data uses 'timestamp', real API uses 'created_at')
     if (options?.orderBy === 'timestamp') {
-      logs.sort((a, b) => {
-        const comparison = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+      logs.sort((a: any, b: any) => {
+        const comparison = new Date(a.timestamp || a.created_at).getTime() - new Date(b.timestamp || b.created_at).getTime();
         return options.order === 'asc' ? comparison : -comparison;
       });
     }
@@ -270,13 +270,13 @@ export async function getAuditLogs(options?: {
   if (options?.orderBy) params.append('orderBy', options.orderBy);
   if (options?.order) params.append('order', options.order);
   
-  return fetchApi<AuditLog[]>(`/audit-logs?${params.toString()}`);
+  return fetchApi<AuditLog[]>(`/policies/audit-logs?${params.toString()}`);
 }
 
 export async function getAuditLogsByCluster(clusterId: string): Promise<ApiResponse<AuditLog[]>> {
   if (API_CONFIG.useMockData) {
     await simulateDelay();
-    const logs = (mockAuditLogs as AuditLog[]).filter(log => log.cluster_id === clusterId);
+    const logs = (mockAuditLogs as any[]).filter((log: any) => log.cluster_id === clusterId) as AuditLog[];
     return { data: logs, error: null, status: 200 };
   }
   return fetchApi<AuditLog[]>(`/clusters/${clusterId}/audit-logs`);
@@ -324,20 +324,20 @@ export type DashboardData = {
   resourcesScanned: number;
 };
 
-export async function getDashboardData(): Promise<ApiResponse<DashboardData>> {
+export async function getDashboardData(clusterId: string): Promise<ApiResponse<DashboardData>> {
   if (API_CONFIG.useMockData) {
     await simulateDelay(400);
     
     const metrics = (mockComplianceMetrics as ComplianceMetric[])
       .sort((a, b) => new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime())[0] || null;
     
-    const recentLogs = [...(mockAuditLogs as AuditLog[])]
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, 3);
+    const recentLogs = [...(mockAuditLogs as any[])]
+      .sort((a: any, b: any) => new Date(b.timestamp || b.created_at).getTime() - new Date(a.timestamp || a.created_at).getTime())
+      .slice(0, 3) as AuditLog[];
     
     const activePoliciesCount = (mockPolicies as Policy[]).filter(p => p.is_active).length;
-    const violationsCount = (mockAuditLogs as AuditLog[]).filter(log => {
-      const logDate = new Date(log.timestamp);
+    const violationsCount = (mockAuditLogs as any[]).filter((log: any) => {
+      const logDate = new Date(log.timestamp || log.created_at);
       const oneDayAgo = new Date();
       oneDayAgo.setDate(oneDayAgo.getDate() - 1);
       return logDate >= oneDayAgo;
@@ -356,5 +356,39 @@ export async function getDashboardData(): Promise<ApiResponse<DashboardData>> {
     };
   }
   
-  return fetchApi<DashboardData>('/dashboard');
+  // Get cluster stats from the new policies API endpoint
+  const statsResponse = await fetchApi<any>(`/policies/cluster/${clusterId}/stats`);
+  
+  if (statsResponse.error || !statsResponse.data) {
+    return {
+      data: null,
+      error: statsResponse.error || 'Failed to fetch dashboard data',
+      status: statsResponse.status,
+    };
+  }
+  
+  const stats = statsResponse.data;
+  
+  // Mock compliance metrics for now (can be replaced with real API later)
+  const metrics: ComplianceMetric = {
+    id: `metric-${clusterId}`,
+    cluster_id: clusterId,
+    overall_score: 85,
+    security_score: 90,
+    cost_score: 75,
+    reliability_score: 88,
+    recorded_at: new Date().toISOString(),
+  };
+  
+  return {
+    data: {
+      metrics,
+      recentLogs: stats.recent_logs || [],
+      activePoliciesCount: stats.active_policies_count || 0,
+      violationsCount: stats.violations_count || 0,
+      resourcesScanned: stats.resources_scanned || 0,
+    },
+    error: null,
+    status: 200,
+  };
 }

@@ -47,13 +47,14 @@ export type Policy = {
 };
 
 export type AuditLog = {
-  id: string;
-  cluster_id: string;
-  resource_name: string;
-  policy_violated: string;
-  action_taken: string;
-  details: string | null;
-  timestamp: string;
+  id: number;
+  action: string;
+  resource_type: string | null;
+  resource_id: number | null;
+  details: any | null;  // Can be object or string
+  status: string;  // "success" or "failure"
+  error_message: string | null;
+  created_at: string;
 };
 
 export type ComplianceMetric = {

@@ -2,16 +2,12 @@
 
 import { Cloud, LogOut, User } from 'lucide-react';
 import { useAuth } from '@/src/contexts/AuthContext';
+import { useCluster } from '@/src/contexts/ClusterContext';
 import { useRouter } from 'next/navigation';
 
-type HeaderProps = {
-  selectedCluster: string;
-  clusters: Array<{ id: string; name: string; status: string }>;
-  onClusterChange: (clusterId: string) => void;
-};
-
-export default function Header({ selectedCluster, clusters, onClusterChange }: HeaderProps) {
+export default function Header() {
   const { user, logout } = useAuth();
+  const { clusters, selectedClusterId, setSelectedClusterId, loading } = useCluster();
   const router = useRouter();
 
   const handleLogout = () => {
@@ -28,9 +24,10 @@ export default function Header({ selectedCluster, clusters, onClusterChange }: H
             <span className="text-sm font-medium text-slate-700">Cluster:</span>
           </div>
           <select
-            value={selectedCluster}
-            onChange={(e) => onClusterChange(e.target.value)}
-            className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            value={selectedClusterId || ''}
+            onChange={(e) => setSelectedClusterId(e.target.value)}
+            disabled={loading || clusters.length === 0}
+            className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {clusters.map((cluster) => (
               <option key={cluster.id} value={cluster.id}>
@@ -38,9 +35,11 @@ export default function Header({ selectedCluster, clusters, onClusterChange }: H
               </option>
             ))}
           </select>
-          <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-xs font-medium rounded-full">
-            Connected
-          </span>
+          {selectedClusterId && (
+            <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-xs font-medium rounded-full">
+              Connected
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-4">

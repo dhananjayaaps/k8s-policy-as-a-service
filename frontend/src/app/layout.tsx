@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import '../index.css';
 import { AuthProvider } from '@/src/contexts/AuthContext';
+import { ClusterProvider } from '@/src/contexts/ClusterContext';
 
 export const metadata: Metadata = {
   title: 'PolicyFlow - Kubernetes Policy Management',
@@ -16,7 +17,9 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <AuthProvider>
-          {children}
+          <ClusterProvider>
+            {children}
+          </ClusterProvider>
         </AuthProvider>
       </body>
     </html>

@@ -29,12 +29,15 @@ export default function AuditLogs() {
   }
 
   const filteredLogs = logs.filter((log) => {
+    const resourceName = `${log.resource_type || 'N/A'}:${log.resource_id || 'N/A'}`;
+    const detailsString = typeof log.details === 'string' ? log.details : JSON.stringify(log.details || {});
+    
     const matchesSearch =
-      log.resource_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      log.policy_violated.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      log.details?.toLowerCase().includes(searchQuery.toLowerCase());
+      resourceName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      log.action.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      detailsString.toLowerCase().includes(searchQuery.toLowerCase());
 
-    const matchesAction = actionFilter === 'all' || log.action_taken === actionFilter;
+    const matchesAction = actionFilter === 'all' || log.status.toUpperCase() === actionFilter;
 
     return matchesSearch && matchesAction;
   });
@@ -67,8 +70,8 @@ export default function AuditLogs() {
                 className="px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
                 <option value="all">All Actions</option>
-                <option value="BLOCKED">Blocked</option>
-                <option value="WARNED">Warned</option>
+                <option value="SUCCESS">Success</option>
+                <option value="FAILURE">Failure</option>
               </select>
             </div>
             <button className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors">
@@ -92,13 +95,13 @@ export default function AuditLogs() {
                       Timestamp
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                      Action
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
                       Resource
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
-                      Policy Violated
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
-                      Action
+                      Status
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
                       Details
@@ -106,33 +109,40 @@ export default function AuditLogs() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {filteredLogs.map((log) => (
-                    <tr key={log.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
-                        {new Date(log.timestamp).toLocaleString()}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-sm font-medium text-slate-900">{log.resource_name}</span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className="text-sm text-slate-600">{log.policy_violated}</span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span
-                          className={`px-3 py-1 text-xs font-medium rounded-full ${
-                            log.action_taken === 'BLOCKED'
-                              ? 'bg-red-100 text-red-700'
-                              : 'bg-yellow-100 text-yellow-700'
-                          }`}
-                        >
-                          {log.action_taken}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-sm text-slate-600 max-w-md">
-                        {log.details}
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredLogs.map((log) => {
+                    const resourceName = `${log.resource_type || 'N/A'}:${log.resource_id || 'N/A'}`;
+                    const detailsDisplay = log.error_message 
+                      || (typeof log.details === 'string' ? log.details : JSON.stringify(log.details))
+                      || 'No details';
+                      
+                    return (
+                      <tr key={log.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
+                          {new Date(log.created_at).toLocaleString()}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="text-sm font-medium text-slate-900">{log.action}</span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className="text-sm text-slate-600">{resourceName}</span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span
+                            className={`px-3 py-1 text-xs font-medium rounded-full ${
+                              log.status === 'failure'
+                                ? 'bg-red-100 text-red-700'
+                                : 'bg-green-100 text-green-700'
+                            }`}
+                          >
+                            {log.status.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-600 max-w-md truncate">
+                          {detailsDisplay}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

@@ -662,6 +662,71 @@ async def get_audit_logs(
     return logs
 
 
+@router.get("/cluster/{cluster_id}/stats")
+async def get_cluster_stats(cluster_id: int, db: Session = Depends(get_db)):
+    """
+    Get statistics for a specific cluster including:
+    - Active policies count
+    - Total deployments count
+    - Violations count (failed audit logs in last 24 hours)
+    - Resources scanned count
+    """
+    from sqlalchemy import func, distinct
+    from datetime import datetime, timedelta
+    
+    # Verify cluster exists
+    cluster = db.query(Cluster).filter(Cluster.id == cluster_id).first()
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+    
+    # Get active policies count for this cluster
+    active_policies_count = db.query(Policy).filter(
+        Policy.cluster_id == cluster_id
+    ).count()
+    
+    # Get total deployments count
+    total_deployments = db.query(PolicyDeployment).filter(
+        PolicyDeployment.cluster_id == cluster_id
+    ).count()
+    
+    # Get deployed policies count
+    deployed_policies_count = db.query(PolicyDeployment).filter(
+        PolicyDeployment.cluster_id == cluster_id,
+        PolicyDeployment.status == "deployed"
+    ).count()
+    
+    # Count failures/violations in last 24 hours
+    twenty_four_hours_ago = datetime.utcnow() - timedelta(days=1)
+    violations_count = db.query(AuditLog).filter(
+        AuditLog.created_at >= twenty_four_hours_ago,
+        AuditLog.status == "failure",
+        AuditLog.resource_type.in_(["policy", "policy_deployment"])
+    ).count()
+    
+    # Get recent audit logs (last 10)
+    recent_logs = db.query(AuditLog).filter(
+        AuditLog.created_at >= twenty_four_hours_ago,
+        AuditLog.resource_type.in_(["policy", "policy_deployment"])
+    ).order_by(AuditLog.created_at.desc()).limit(10).all()
+    
+    # Calculate resources scanned (unique policy deployments)
+    resources_scanned = db.query(func.count(distinct(PolicyDeployment.id))).filter(
+        PolicyDeployment.cluster_id == cluster_id,
+        PolicyDeployment.status == "deployed"
+    ).scalar() or 0
+    
+    return {
+        "cluster_id": cluster_id,
+        "cluster_name": cluster.name,
+        "active_policies_count": active_policies_count,
+        "deployed_policies_count": deployed_policies_count,
+        "total_deployments": total_deployments,
+        "violations_count": violations_count,
+        "resources_scanned": resources_scanned,
+        "recent_logs": recent_logs
+    }
+
+
 @router.get("/cluster/{cluster_id}/policy-reports")
 async def get_cluster_policy_reports(cluster_id: int, db: Session = Depends(get_db)):
     """

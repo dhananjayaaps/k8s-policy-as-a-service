@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle, TrendingUp } from 'lucide-react';
+import { AlertTriangle, CheckCircle, TrendingUp, Server } from 'lucide-react';
 import { getDashboardData } from '../lib/api';
+import { useCluster } from '../contexts/ClusterContext';
 import type { ComplianceMetric, AuditLog } from '../types';
 
 export default function Dashboard() {
@@ -12,24 +13,30 @@ export default function Dashboard() {
   const [violations, setViolations] = useState(0);
   const [resourcesScanned, setResourcesScanned] = useState(0);
   const [loading, setLoading] = useState(true);
+  const { clusters, selectedClusterId, setSelectedClusterId, loading: loadingClusters } = useCluster();
 
   useEffect(() => {
-    loadData();
-  }, []);
-
-  async function loadData() {
-    setLoading(true);
-    const response = await getDashboardData();
-    
-    if (response.data) {
-      setMetrics(response.data.metrics);
-      setRecentLogs(response.data.recentLogs);
-      setActivePolicies(response.data.activePoliciesCount);
-      setViolations(response.data.violationsCount);
-      setResourcesScanned(response.data.resourcesScanned);
+    async function fetchData() {
+      if (!selectedClusterId) {
+        setLoading(false);
+        return;
+      }
+      
+      setLoading(true);
+      const response = await getDashboardData(selectedClusterId);
+      
+      if (response.data) {
+        setMetrics(response.data.metrics);
+        setRecentLogs(response.data.recentLogs);
+        setActivePolicies(response.data.activePoliciesCount);
+        setViolations(response.data.violationsCount);
+        setResourcesScanned(response.data.resourcesScanned);
+      }
+      setLoading(false);
     }
-    setLoading(false);
-  }
+    
+    fetchData();
+  }, [selectedClusterId]);
 
   const scoreColor = (score: number) => {
     if (score >= 90) return 'text-emerald-600';
@@ -42,6 +49,30 @@ export default function Dashboard() {
     if (score >= 75) return 'bg-yellow-50 border-yellow-200';
     return 'bg-red-50 border-red-200';
   };
+
+  if (loadingClusters) {
+    return (
+      <div className="p-8 flex items-center justify-center min-h-[400px]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600"></div>
+      </div>
+    );
+  }
+
+  if (clusters.length === 0) {
+    return (
+      <div className="p-8">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-slate-900 mb-2">Policy Compliance Dashboard</h1>
+          <p className="text-slate-600">Monitor your cluster's security, cost, and reliability posture</p>
+        </div>
+        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6 text-center">
+          <Server className="w-12 h-12 text-yellow-600 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-slate-900 mb-2">No Clusters Found</h3>
+          <p className="text-slate-600">Please add a cluster first to view dashboard metrics.</p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -126,29 +157,36 @@ export default function Dashboard() {
             <h3 className="text-lg font-semibold text-slate-900">Recent Activity</h3>
           </div>
           <div className="space-y-3">
-            {recentLogs.map((log) => (
-              <div key={log.id} className="flex items-start gap-3 p-3 bg-slate-50 rounded-lg">
-                {log.action_taken === 'BLOCKED' ? (
-                  <AlertTriangle className="w-5 h-5 text-red-500 mt-0.5" />
-                ) : (
-                  <CheckCircle className="w-5 h-5 text-yellow-500 mt-0.5" />
-                )}
-                <div className="flex-1">
-                  <div className="text-sm font-medium text-slate-900">{log.resource_name}</div>
-                  <div className="text-xs text-slate-600 mt-1">{log.details}</div>
-                  <div className="text-xs text-slate-500 mt-1">
-                    {new Date(log.timestamp).toLocaleString()}
+            {recentLogs.map((log) => {
+              const resourceName = `${log.resource_type || 'Resource'}:${log.resource_id || 'N/A'}`;
+              const detailsDisplay = log.error_message 
+                || (typeof log.details === 'string' ? log.details : JSON.stringify(log.details))
+                || 'No details available';
+              
+              return (
+                <div key={log.id} className="flex items-start gap-3 p-3 bg-slate-50 rounded-lg">
+                  {log.status === 'failure' ? (
+                    <AlertTriangle className="w-5 h-5 text-red-500 mt-0.5" />
+                  ) : (
+                    <CheckCircle className="w-5 h-5 text-green-500 mt-0.5" />
+                  )}
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-slate-900">{resourceName}</div>
+                    <div className="text-xs text-slate-600 mt-1">{log.action}</div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      {new Date(log.created_at).toLocaleString()}
+                    </div>
                   </div>
+                  <span className={`px-2 py-1 text-xs font-medium rounded ${
+                    log.status === 'failure'
+                      ? 'bg-red-100 text-red-700'
+                      : 'bg-green-100 text-green-700'
+                  }`}>
+                    {log.status.toUpperCase()}
+                  </span>
                 </div>
-                <span className={`px-2 py-1 text-xs font-medium rounded ${
-                  log.action_taken === 'BLOCKED'
-                    ? 'bg-red-100 text-red-700'
-                    : 'bg-yellow-100 text-yellow-700'
-                }`}>
-                  {log.action_taken}
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 

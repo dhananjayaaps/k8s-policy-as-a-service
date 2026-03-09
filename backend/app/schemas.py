@@ -401,4 +401,3 @@ class KyvernoInstallViaTokenRequest(BaseModel):
     namespace: str = Field(default="kyverno", description="Namespace to install Kyverno")
     release_name: str = Field(default="kyverno", description="Helm release name")
     create_namespace: bool = Field(default=True, description="Create namespace if it doesn't exist")
-
