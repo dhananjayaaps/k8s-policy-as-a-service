@@ -317,11 +317,40 @@ export async function getComplianceMetricsByCluster(clusterId: string): Promise<
 // ============== Dashboard API (combined data) ==============
 
 export type DashboardData = {
-  metrics: ComplianceMetric | null;
-  recentLogs: AuditLog[];
+  // Cluster info
+  cluster_id: number;
+  cluster_name: string;
+  
+  // Policy statistics
   activePoliciesCount: number;
+  deployedPoliciesCount: number;
+  totalDeployments: number;
+  failedDeploymentsCount: number;
+  enforcementRate: number;
+  
+  // Compliance scores (calculated from real data)
+  overallScore: number;
+  securityScore: number;
+  costScore: number;
+  reliabilityScore: number;
+  
+  // Violation statistics
   violationsCount: number;
+  violations24h: number;
+  violations7d: number;
+  violationTrend: 'increasing' | 'decreasing' | 'stable';
+  
+  // Activity metrics
+  totalLogs24h: number;
+  successCount24h: number;
+  successRate: number;
   resourcesScanned: number;
+  
+  // Recent activity
+  recentLogs: AuditLog[];
+  
+  // Metadata
+  generatedAt: string;
 };
 
 export async function getDashboardData(clusterId: string): Promise<ApiResponse<DashboardData>> {
@@ -345,18 +374,34 @@ export async function getDashboardData(clusterId: string): Promise<ApiResponse<D
     
     return {
       data: {
-        metrics,
-        recentLogs,
+        cluster_id: parseInt(clusterId, 10),
+        cluster_name: 'Mock Cluster',
         activePoliciesCount,
+        deployedPoliciesCount: activePoliciesCount - 2,
+        totalDeployments: activePoliciesCount + 5,
+        failedDeploymentsCount: 2,
+        enforcementRate: 85.5,
+        overallScore: metrics?.overall_score || 85,
+        securityScore: metrics?.security_score || 90,
+        costScore: metrics?.cost_score || 75,
+        reliabilityScore: metrics?.reliability_score || 88,
         violationsCount,
-        resourcesScanned: 127, // Mock value
+        violations24h: violationsCount,
+        violations7d: violationsCount * 7,
+        violationTrend: 'stable',
+        totalLogs24h: recentLogs.length,
+        successCount24h: recentLogs.filter(l => l.status === 'success').length,
+        successRate: 92.5,
+        resourcesScanned: 127,
+        recentLogs,
+        generatedAt: new Date().toISOString(),
       },
       error: null,
       status: 200,
     };
   }
   
-  // Get cluster stats from the new policies API endpoint
+  // Get cluster stats from the policies API endpoint
   const statsResponse = await fetchApi<any>(`/policies/cluster/${clusterId}/stats`);
   
   if (statsResponse.error || !statsResponse.data) {
@@ -369,24 +414,30 @@ export async function getDashboardData(clusterId: string): Promise<ApiResponse<D
   
   const stats = statsResponse.data;
   
-  // Mock compliance metrics for now (can be replaced with real API later)
-  const metrics: ComplianceMetric = {
-    id: `metric-${clusterId}`,
-    cluster_id: clusterId,
-    overall_score: 85,
-    security_score: 90,
-    cost_score: 75,
-    reliability_score: 88,
-    recorded_at: new Date().toISOString(),
-  };
-  
+  // Map API response to DashboardData (all values calculated in backend)
   return {
     data: {
-      metrics,
-      recentLogs: stats.recent_logs || [],
+      cluster_id: stats.cluster_id,
+      cluster_name: stats.cluster_name,
       activePoliciesCount: stats.active_policies_count || 0,
+      deployedPoliciesCount: stats.deployed_policies_count || 0,
+      totalDeployments: stats.total_deployments || 0,
+      failedDeploymentsCount: stats.failed_deployments_count || 0,
+      enforcementRate: stats.enforcement_rate || 0,
+      overallScore: stats.overall_score || 0,
+      securityScore: stats.security_score || 0,
+      costScore: stats.cost_score || 0,
+      reliabilityScore: stats.reliability_score || 0,
       violationsCount: stats.violations_count || 0,
+      violations24h: stats.violations_24h || 0,
+      violations7d: stats.violations_7d || 0,
+      violationTrend: stats.violation_trend || 'stable',
+      totalLogs24h: stats.total_logs_24h || 0,
+      successCount24h: stats.success_count_24h || 0,
+      successRate: stats.success_rate || 0,
       resourcesScanned: stats.resources_scanned || 0,
+      recentLogs: stats.recent_logs || [],
+      generatedAt: stats.generated_at,
     },
     error: null,
     status: 200,

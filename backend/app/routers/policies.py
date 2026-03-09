@@ -22,6 +22,7 @@ from app.schemas import (
     PolicyDeployResponse,
     PolicyDeploymentResponse,
     AuditLogResponse,
+    ClusterStatsResponse,
 )
 from app.services.k8s_connector import get_k8s_connector
 from app.services.template_engine import get_template_engine
@@ -662,16 +663,16 @@ async def get_audit_logs(
     return logs
 
 
-@router.get("/cluster/{cluster_id}/stats")
+@router.get("/cluster/{cluster_id}/stats", response_model=ClusterStatsResponse)
 async def get_cluster_stats(cluster_id: int, db: Session = Depends(get_db)):
     """
-    Get statistics for a specific cluster including:
-    - Active policies count
-    - Total deployments count
-    - Violations count (failed audit logs in last 24 hours)
-    - Resources scanned count
+    Get comprehensive statistics for a specific cluster including:
+    - Active policies count and deployment stats
+    - Compliance scores (overall, security, cost, reliability)
+    - Violations and audit log statistics
+    - Recent activity and trends
     """
-    from sqlalchemy import func, distinct
+    from sqlalchemy import func, distinct, case
     from datetime import datetime, timedelta
     
     # Verify cluster exists
@@ -679,51 +680,187 @@ async def get_cluster_stats(cluster_id: int, db: Session = Depends(get_db)):
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
     
-    # Get active policies count for this cluster
+    # Time windows for calculations
+    twenty_four_hours_ago = datetime.utcnow() - timedelta(days=1)
+    seven_days_ago = datetime.utcnow() - timedelta(days=7)
+    
+    # ============ Policy Counts ============
     active_policies_count = db.query(Policy).filter(
         Policy.cluster_id == cluster_id
     ).count()
     
-    # Get total deployments count
     total_deployments = db.query(PolicyDeployment).filter(
         PolicyDeployment.cluster_id == cluster_id
     ).count()
     
-    # Get deployed policies count
     deployed_policies_count = db.query(PolicyDeployment).filter(
         PolicyDeployment.cluster_id == cluster_id,
         PolicyDeployment.status == "deployed"
     ).count()
     
-    # Count failures/violations in last 24 hours
-    twenty_four_hours_ago = datetime.utcnow() - timedelta(days=1)
+    failed_deployments_count = db.query(PolicyDeployment).filter(
+        PolicyDeployment.cluster_id == cluster_id,
+        PolicyDeployment.status == "failed"
+    ).count()
+    
+    # ============ Audit Log Analysis ============
+    # Total audit logs in last 24 hours
+    total_logs_24h = db.query(AuditLog).filter(
+        AuditLog.created_at >= twenty_four_hours_ago,
+        AuditLog.resource_type.in_(["policy", "policy_deployment"])
+    ).count()
+    
+    # Success vs failure counts
+    success_count_24h = db.query(AuditLog).filter(
+        AuditLog.created_at >= twenty_four_hours_ago,
+        AuditLog.status == "success",
+        AuditLog.resource_type.in_(["policy", "policy_deployment"])
+    ).count()
+    
     violations_count = db.query(AuditLog).filter(
         AuditLog.created_at >= twenty_four_hours_ago,
         AuditLog.status == "failure",
         AuditLog.resource_type.in_(["policy", "policy_deployment"])
     ).count()
     
+    # Violations in last 7 days for trend
+    violations_7d = db.query(AuditLog).filter(
+        AuditLog.created_at >= seven_days_ago,
+        AuditLog.status == "failure",
+        AuditLog.resource_type.in_(["policy", "policy_deployment"])
+    ).count()
+    
     # Get recent audit logs (last 10)
     recent_logs = db.query(AuditLog).filter(
-        AuditLog.created_at >= twenty_four_hours_ago,
-        AuditLog.resource_type.in_(["policy", "policy_deployment"])
+        AuditLog.resource_type.in_(["policy", "policy_deployment", "cluster"])
     ).order_by(AuditLog.created_at.desc()).limit(10).all()
     
-    # Calculate resources scanned (unique policy deployments)
-    resources_scanned = db.query(func.count(distinct(PolicyDeployment.id))).filter(
+    # ============ Compliance Score Calculations ============
+    # Overall Compliance Score (0-100)
+    # Based on: deployment success rate, low violations, active monitoring
+    deployment_success_rate = 0
+    if total_deployments > 0:
+        deployment_success_rate = (deployed_policies_count / total_deployments) * 100
+    
+    # Penalty for violations
+    violation_penalty = min(violations_count * 2, 30)  # Max 30 points penalty
+    
+    # Bonus for having policies deployed
+    policy_coverage_bonus = min(deployed_policies_count * 5, 20)  # Max 20 points bonus
+    
+    overall_score = max(0, min(100, int(
+        deployment_success_rate * 0.5 +  # 50% weight on deployment success
+        policy_coverage_bonus +          # Bonus for coverage
+        (40 if violations_count == 0 else max(0, 40 - violation_penalty))  # Violation penalty
+    )))
+    
+    # Security Score (0-100)
+    # Based on: security policies deployed, low security violations
+    security_policies = db.query(Policy).filter(
+        Policy.cluster_id == cluster_id,
+        Policy.category.in_(["security", "best-practices", "pod-security"])
+    ).count()
+    
+    security_deployments = db.query(PolicyDeployment).filter(
         PolicyDeployment.cluster_id == cluster_id,
         PolicyDeployment.status == "deployed"
-    ).scalar() or 0
+    ).join(Policy).filter(
+        Policy.category.in_(["security", "best-practices", "pod-security"])
+    ).count()
+    
+    security_score = max(0, min(100, int(
+        (security_deployments * 10) +  # 10 points per security policy
+        (60 if violations_count < 3 else max(30, 60 - violations_count * 5))
+    )))
+    
+    # Cost Score (0-100)
+    # Based on: resource limit policies, cost-related policies
+    cost_policies = db.query(Policy).filter(
+        Policy.cluster_id == cluster_id,
+        Policy.category.in_(["resource-management", "cost-optimization"])
+    ).count()
+    
+    cost_deployments = db.query(PolicyDeployment).filter(
+        PolicyDeployment.cluster_id == cluster_id,
+        PolicyDeployment.status == "deployed"
+    ).join(Policy).filter(
+        Policy.category.in_(["resource-management", "cost-optimization"])
+    ).count()
+    
+    cost_score = max(0, min(100, int(
+        70 +  # Base score
+        (cost_deployments * 10) -  # Bonus for cost policies
+        (failed_deployments_count * 5)  # Penalty for failures
+    )))
+    
+    # Reliability Score (0-100)
+    # Based on: deployment stability, low failure rate
+    reliability_base = 85  # Start with high base
+    failure_penalty = min(failed_deployments_count * 10, 40)
+    
+    recent_success_rate = 0
+    if total_logs_24h > 0:
+        recent_success_rate = (success_count_24h / total_logs_24h) * 15  # Max 15 points
+    
+    reliability_score = max(0, min(100, int(
+        reliability_base - failure_penalty + recent_success_rate
+    )))
+    
+    # ============ Additional Metrics ============
+    resources_scanned = deployed_policies_count  # Each deployed policy scans resources
+    
+    # Policy enforcement rate
+    enforcement_rate = 0
+    if active_policies_count > 0:
+        enforcement_rate = round((deployed_policies_count / active_policies_count) * 100, 1)
+    
+    # Success rate
+    success_rate = 0
+    if total_logs_24h > 0:
+        success_rate = round((success_count_24h / total_logs_24h) * 100, 1)
+    
+    # Trend indicator (comparing 24h vs 7d average)
+    avg_violations_per_day_7d = violations_7d / 7 if violations_7d > 0 else 0
+    violation_trend = "stable"
+    if violations_count > avg_violations_per_day_7d * 1.5:
+        violation_trend = "increasing"
+    elif violations_count < avg_violations_per_day_7d * 0.5:
+        violation_trend = "decreasing"
     
     return {
         "cluster_id": cluster_id,
         "cluster_name": cluster.name,
+        
+        # Policy statistics
         "active_policies_count": active_policies_count,
         "deployed_policies_count": deployed_policies_count,
         "total_deployments": total_deployments,
+        "failed_deployments_count": failed_deployments_count,
+        "enforcement_rate": enforcement_rate,
+        
+        # Compliance scores
+        "overall_score": overall_score,
+        "security_score": security_score,
+        "cost_score": cost_score,
+        "reliability_score": reliability_score,
+        
+        # Violation statistics
         "violations_count": violations_count,
+        "violations_24h": violations_count,
+        "violations_7d": violations_7d,
+        "violation_trend": violation_trend,
+        
+        # Activity metrics
+        "total_logs_24h": total_logs_24h,
+        "success_count_24h": success_count_24h,
+        "success_rate": success_rate,
         "resources_scanned": resources_scanned,
-        "recent_logs": recent_logs
+        
+        # Recent activity
+        "recent_logs": recent_logs,
+        
+        # Timestamp
+        "generated_at": datetime.utcnow().isoformat()
     }
 
 

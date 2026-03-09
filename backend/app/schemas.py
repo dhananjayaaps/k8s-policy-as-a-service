@@ -248,6 +248,49 @@ class KyvernoUninstallResponse(BaseModel):
     """Response after uninstalling Kyverno"""
     success: bool
     message: str
+
+
+# ============ Cluster Stats Schemas ============
+
+class ClusterStatsResponse(BaseModel):
+    """Comprehensive cluster statistics with calculated compliance scores"""
+    # Cluster info
+    cluster_id: int
+    cluster_name: str
+    
+    # Policy statistics
+    active_policies_count: int
+    deployed_policies_count: int
+    total_deployments: int
+    failed_deployments_count: int
+    enforcement_rate: float
+    
+    # Compliance scores (calculated from real data)
+    overall_score: int = Field(..., ge=0, le=100, description="Overall compliance score (0-100)")
+    security_score: int = Field(..., ge=0, le=100, description="Security compliance score (0-100)")
+    cost_score: int = Field(..., ge=0, le=100, description="Cost optimization score (0-100)")
+    reliability_score: int = Field(..., ge=0, le=100, description="Reliability score (0-100)")
+    
+    # Violation statistics
+    violations_count: int = Field(..., description="Total violations")
+    violations_24h: int = Field(..., description="Violations in last 24 hours")
+    violations_7d: int = Field(..., description="Violations in last 7 days")
+    violation_trend: str = Field(..., pattern="^(increasing|decreasing|stable)$", description="Violation trend")
+    
+    # Activity metrics
+    total_logs_24h: int = Field(..., description="Total audit logs in last 24 hours")
+    success_count_24h: int = Field(..., description="Successful operations in last 24 hours")
+    success_rate: float = Field(..., ge=0, le=100, description="Success rate percentage")
+    resources_scanned: int = Field(..., description="Number of resources being monitored")
+    
+    # Recent activity
+    recent_logs: List[AuditLogResponse]
+    
+    # Metadata
+    generated_at: str = Field(..., description="ISO timestamp when stats were generated")
+    
+    class Config:
+        from_attributes = True
     output: Optional[str] = None
 
 

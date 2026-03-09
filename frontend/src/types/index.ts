@@ -66,3 +66,40 @@ export type ComplianceMetric = {
   reliability_score: number;
   recorded_at: string;
 };
+
+export type DashboardData = {
+  // Cluster info
+  cluster_id: number;
+  cluster_name: string;
+  
+  // Policy statistics
+  activePoliciesCount: number;
+  deployedPoliciesCount: number;
+  totalDeployments: number;
+  failedDeploymentsCount: number;
+  enforcementRate: number;
+  
+  // Compliance scores (calculated from real data)
+  overallScore: number;
+  securityScore: number;
+  costScore: number;
+  reliabilityScore: number;
+  
+  // Violation statistics
+  violationsCount: number;
+  violations24h: number;
+  violations7d: number;
+  violationTrend: 'increasing' | 'decreasing' | 'stable';
+  
+  // Activity metrics
+  totalLogs24h: number;
+  successCount24h: number;
+  successRate: number;
+  resourcesScanned: number;
+  
+  // Recent activity
+  recentLogs: AuditLog[];
+  
+  // Metadata
+  generatedAt: string;
+};
