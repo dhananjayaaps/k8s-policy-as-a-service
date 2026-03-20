@@ -3,7 +3,25 @@
 // It can switch between mock data and real REST endpoints via config.
 
 import { API_CONFIG, getApiUrl } from './config';
-import type { Cluster, Policy, AuditLog, ComplianceMetric, User, LoginRequest, SignupRequest, AuthResponse } from '../types';
+import type { 
+  Cluster, 
+  Policy, 
+  AuditLog, 
+  ComplianceMetric, 
+  User, 
+  LoginRequest, 
+  SignupRequest, 
+  AuthResponse,
+  SSHConnectRequest,
+  SSHConnectResponse,
+  ClusterSetupRequest,
+  ClusterSetupResponse,
+  ClusterConnectRequest,
+  ClusterConnectResponse,
+  TokenConnectRequest,
+  KyvernoStatus,
+  NamespaceListResponse
+} from '../types';
 
 // Import mock data
 import mockClusters from '../data/mock/clusters.json';
@@ -183,7 +201,18 @@ export async function getAllUsers(token: string): Promise<ApiResponse<User[]>> {
 export async function getClusters(): Promise<ApiResponse<Cluster[]>> {
   if (API_CONFIG.useMockData) {
     await simulateDelay();
-    return { data: mockClusters as Cluster[], error: null, status: 200 };
+    // Transform mock data to match new Cluster type
+    const transformedClusters = (mockClusters as any[]).map(c => ({
+      ...c,
+      id: parseInt(c.id, 10),
+      host: c.api_endpoint || null,
+      server_url: c.api_endpoint || null,
+      kubeconfig_content: null,
+      context: null,
+      description: null,
+      is_active: c.status === 'active',
+    }));
+    return { data: transformedClusters as Cluster[], error: null, status: 200 };
   }
   return fetchApi<Cluster[]>('/clusters');
 }
@@ -191,10 +220,184 @@ export async function getClusters(): Promise<ApiResponse<Cluster[]>> {
 export async function getClusterById(id: string): Promise<ApiResponse<Cluster | null>> {
   if (API_CONFIG.useMockData) {
     await simulateDelay();
-    const cluster = (mockClusters as Cluster[]).find(c => c.id === id) || null;
-    return { data: cluster, error: null, status: cluster ? 200 : 404 };
+    const numericId = parseInt(id, 10);
+    const cluster = (mockClusters as any[]).find(c => parseInt(c.id, 10) === numericId);
+    if (!cluster) {
+      return { data: null, error: null, status: 404 };
+    }
+    const transformedCluster = {
+      ...cluster,
+      id: numericId,
+      host: cluster.api_endpoint || null,
+      server_url: cluster.api_endpoint || null,
+      kubeconfig_content: null,
+      context: null,
+      description: null,
+      is_active: cluster.status === 'active',
+    };
+    return { data: transformedCluster as Cluster, error: null, status: 200 };
   }
   return fetchApi<Cluster>(`/clusters/${id}`);
+}
+
+export async function createCluster(cluster: {
+  name: string;
+  host?: string;
+  kubeconfig_content?: string;
+  context?: string;
+  description?: string;
+}): Promise<ApiResponse<Cluster>> {
+  return fetchApi<Cluster>('/clusters/', {
+    method: 'POST',
+    body: JSON.stringify(cluster),
+  });
+}
+
+export async function updateCluster(id: number, updates: {
+  name?: string;
+  host?: string;
+  kubeconfig_content?: string;
+  context?: string;
+  description?: string;
+  is_active?: boolean;
+}): Promise<ApiResponse<Cluster>> {
+  return fetchApi<Cluster>(`/clusters/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function deleteCluster(id: number): Promise<ApiResponse<{ message: string }>> {
+  return fetchApi<{ message: string }>(`/clusters/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function connectClusterViaKubeconfig(request: {
+  kubeconfig_content: string;
+  context?: string;
+}): Promise<ApiResponse<{
+  success: boolean;
+  message: string;
+  cluster_info?: any;
+  namespaces?: string[];
+}>> {
+  return fetchApi('/clusters/connect', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export async function connectClusterViaToken(request: {
+  server_url: string;
+  token: string;
+  ca_cert_data?: string;
+}): Promise<ApiResponse<{
+  success: boolean;
+  message: string;
+  cluster_info?: any;
+  namespaces?: string[];
+}>> {
+  return fetchApi('/clusters/connect-with-token', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export async function sshConnect(request: {
+  host: string;
+  username: string;
+  pem_key_content?: string;
+  password?: string;
+  port?: number;
+}): Promise<ApiResponse<{
+  success: boolean;
+  message: string;
+  session_id: string;
+  host?: string;
+}>> {
+  return fetchApi('/clusters/ssh/connect', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export async function sshDisconnect(sessionId: string): Promise<ApiResponse<{ message: string }>> {
+  return fetchApi(`/clusters/ssh/disconnect?session_id=${sessionId}`, {
+    method: 'POST',
+  });
+}
+
+export async function setupCluster(request: {
+  session_id: string;
+  cluster_name: string;
+  cluster_description?: string;
+  service_account_name?: string;
+  namespace?: string;
+  role_type?: string;
+  install_kyverno?: boolean;
+  kyverno_namespace?: string;
+  verify_ssl?: boolean;
+  public_api_url?: string;
+  api_port?: number;
+}): Promise<ApiResponse<{
+  success: boolean;
+  message: string;
+  cluster_id: number;
+  cluster_name: string;
+  host: string;
+  server_url: string;
+  service_account_id: number;
+  service_account_name: string;
+  token: string;
+  kyverno_installed: boolean;
+  kyverno_message?: string;
+}>> {
+  return fetchApi('/clusters/setup', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export async function getKyvernoStatus(clusterId: number): Promise<ApiResponse<{
+  installed: boolean;
+  version?: string;
+  namespace?: string;
+  deployment_status?: any;
+  helm_release?: any;
+  api_resources_available?: boolean;
+  webhooks_configured?: boolean;
+}>> {
+  return fetchApi(`/clusters/${clusterId}/kyverno/status`);
+}
+
+export async function getClusterNamespaces(clusterId: number): Promise<ApiResponse<{
+  namespaces: string[];
+  count: number;
+}>> {
+  return fetchApi(`/clusters/${clusterId}/namespaces`);
+}
+
+export async function getClusterInfo(clusterId: number): Promise<ApiResponse<any>> {
+  return fetchApi(`/clusters/${clusterId}/info`);
+}
+
+export async function installKyverno(clusterId: number, request: {
+  service_account_id?: number;
+  namespace?: string;
+  release_name?: string;
+  create_namespace?: boolean;
+}): Promise<ApiResponse<{
+  success: boolean;
+  message: string;
+  release_name?: string;
+  namespace?: string;
+  output?: string;
+}>> {
+  return fetchApi(`/clusters/${clusterId}/install-kyverno`, {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
 }
 
 // ============== Policies API ==============

@@ -19,7 +19,7 @@ export default function Dashboard() {
       }
       
       setLoading(true);
-      const response = await getDashboardData(selectedClusterId);
+      const response = await getDashboardData(selectedClusterId.toString());
       
       if (response.data) {
         setDashboardData(response.data);

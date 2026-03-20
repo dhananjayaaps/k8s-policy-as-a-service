@@ -1,6 +1,7 @@
 'use client';
 
 import { Bell, Database, Shield, Users } from 'lucide-react';
+import ClusterManagement from '../components/ClusterManagement/ClusterManagement';
 
 export default function Settings() {
   return (
@@ -11,6 +12,21 @@ export default function Settings() {
       </div>
 
       <div className="space-y-6">
+        {/* Cluster Management Section */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
+              <Database className="w-5 h-5 text-emerald-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Kubernetes Clusters</h2>
+              <p className="text-sm text-slate-600">Manage cluster connections and configurations</p>
+            </div>
+          </div>
+          <ClusterManagement />
+        </div>
+
+        {/* Notifications */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
           <div className="flex items-center gap-3 mb-6">
             <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -43,37 +59,7 @@ export default function Settings() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
-              <Database className="w-5 h-5 text-emerald-600" />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900">Cluster Connection</h2>
-              <p className="text-sm text-slate-600">Manage Kubernetes cluster integrations</p>
-            </div>
-          </div>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">API Endpoint</label>
-              <input
-                type="text"
-                value="https://api.cluster.example.com"
-                readOnly
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg bg-slate-50 text-slate-600"
-              />
-            </div>
-            <div className="flex items-center gap-3">
-              <button className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700">
-                Test Connection
-              </button>
-              <button className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200">
-                Update Config
-              </button>
-            </div>
-          </div>
-        </div>
-
+        {/* Security */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
           <div className="flex items-center gap-3 mb-6">
             <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
@@ -106,6 +92,7 @@ export default function Settings() {
           </div>
         </div>
 
+        {/* Team Members */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
           <div className="flex items-center gap-3 mb-6">
             <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center">
