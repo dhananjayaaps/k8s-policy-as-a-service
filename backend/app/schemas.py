@@ -138,6 +138,26 @@ class PolicyDeployRequest(BaseModel):
     parameters: Optional[Dict[str, Any]] = None
 
 
+class NamespaceDeployConfig(BaseModel):
+    """Configuration for deploying to a specific namespace"""
+    namespace: str = Field(..., description="Target namespace")
+    parameters: Optional[Dict[str, Any]] = Field(None, description="Namespace-specific parameter overrides")
+
+
+class PolicyMultiDeployRequest(BaseModel):
+    """Request to deploy a policy to multiple namespaces with per-namespace parameters"""
+    policy_id: int
+    cluster_id: int
+    namespace_configs: List[NamespaceDeployConfig] = Field(..., description="List of namespace configurations")
+
+
+class PolicyMultiDeployResponse(BaseModel):
+    """Response after deploying a policy to multiple namespaces"""
+    success: bool
+    message: str
+    results: List[Dict[str, Any]] = Field(default_factory=list, description="Per-namespace deployment results")
+
+
 class PolicyDeployResponse(BaseModel):
     """Response after deploying a policy"""
     success: bool

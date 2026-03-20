@@ -43,6 +43,9 @@ export default function Marketplace() {
     // Load deployment status when cluster changes
     if (selectedClusterId && policies.length > 0) {
       loadDeploymentStatuses();
+    } else {
+      // Clear deployment statuses when no cluster selected
+      setDeploymentStatus({});
     }
   }, [selectedClusterId, policies]);
 
@@ -73,7 +76,7 @@ export default function Marketplace() {
     await Promise.all(
       policies.map(async (policy) => {
         try {
-          const response = await checkDeploymentStatus(policy.id, selectedClusterId);
+          const response = await checkDeploymentStatus(policy.id, String(selectedClusterId));
           if (response.data) {
             statuses[policy.id] = {
               deployed: response.data.deployed,
@@ -108,39 +111,33 @@ export default function Marketplace() {
     try {
       if (currentlyDeployed) {
         // Undeploy from cluster
-        const response = await quickUndeployPolicy(policy.id, selectedClusterId);
+        const response = await quickUndeployPolicy(policy.id, String(selectedClusterId));
         if (response.data?.success) {
-          setDeploymentStatus(prev => ({
-            ...prev,
-            [policy.id]: { deployed: false, loading: false }
-          }));
+          // Reload all statuses to get updated previous config info
+          await loadDeploymentStatuses();
         } else {
           throw new Error(response.error || 'Failed to undeploy');
         }
       } else {
         // Try to deploy to cluster
-        const response = await quickDeployPolicy(policy.id, selectedClusterId);
+        const response = await quickDeployPolicy(policy.id, String(selectedClusterId));
         
-        // Check if configuration is required
-        if (response.error && typeof response.error === 'object') {
-          const errorDetail = response.error as any;
-          if (errorDetail.error === 'configuration_required') {
-            // Configuration needed - open editor instead
-            setDeploymentStatus(prev => ({
-              ...prev,
-              [policy.id]: { deployed: false, loading: false }
-            }));
-            setSelectedPolicy(policy);
-            setIsEditorOpen(true);
-            return;
-          }
+        // Check if configuration is required (backend returns 400 with specific message)
+        if (!response.data && response.status === 400 && 
+            typeof response.error === 'string' && response.error.includes('requires configuration')) {
+          // Configuration needed - open editor instead
+          setDeploymentStatus(prev => ({
+            ...prev,
+            [policy.id]: { deployed: false, loading: false }
+          }));
+          setSelectedPolicy(policy);
+          setIsEditorOpen(true);
+          return;
         }
         
         if (response.data?.success) {
-          setDeploymentStatus(prev => ({
-            ...prev,
-            [policy.id]: { deployed: true, loading: false }
-          }));
+          // Reload all statuses to get full deployment info
+          await loadDeploymentStatuses();
         } else {
           throw new Error(response.error || 'Failed to deploy');
         }
@@ -163,7 +160,7 @@ export default function Marketplace() {
     
     // Fetch current deployment parameters if exists
     try {
-      const statusResponse = await checkDeploymentStatus(policy.id, selectedClusterId);
+      const statusResponse = await checkDeploymentStatus(policy.id, String(selectedClusterId));
       if (statusResponse.data?.deployment_info?.parameters) {
         // Pre-fill with current deployed parameters
         setCurrentDeploymentParams(statusResponse.data.deployment_info.parameters);
@@ -268,6 +265,13 @@ export default function Marketplace() {
       </div>
 
       <div className="grid grid-cols-2 gap-6">
+        {filteredPolicies.length === 0 && (
+          <div className="col-span-2 flex flex-col items-center justify-center py-16 text-center">
+            <Search className="w-12 h-12 text-slate-300 mb-4" />
+            <h3 className="text-lg font-semibold text-slate-700 mb-1">No policies found</h3>
+            <p className="text-sm text-slate-500">Try adjusting your search or filter criteria.</p>
+          </div>
+        )}
         {filteredPolicies.map((policy) => {
           const Icon = categoryIcons[policy.category] || Shield;
           const status = deploymentStatus[policy.id];
@@ -303,9 +307,12 @@ export default function Marketplace() {
                 <button
                   onClick={() => handleToggleDeployment(policy, isDeployed)}
                   disabled={!selectedClusterId || isLoading || !canToggle}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    !selectedClusterId || !canToggle ? 'bg-slate-200 cursor-not-allowed' :
-                    isDeployed ? 'bg-emerald-600' : 'bg-slate-300'
+                  className={`relative inline-flex h-7 w-12 items-center rounded-full transition-all duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+                    !selectedClusterId || !canToggle
+                      ? 'bg-slate-200 cursor-not-allowed focus:ring-slate-300'
+                      : isDeployed
+                      ? 'bg-emerald-500 shadow-inner focus:ring-emerald-500'
+                      : 'bg-slate-300 hover:bg-slate-400 focus:ring-slate-400'
                   }`}
                   title={
                     !selectedClusterId ? 'Select a cluster first' :
@@ -314,13 +321,15 @@ export default function Marketplace() {
                   }
                 >
                   {isLoading ? (
-                    <Loader2 className="w-4 h-4 text-white absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 animate-spin" />
+                    <Loader2 className="w-4 h-4 text-white absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 animate-spin" />
                   ) : (
                     <span
-                      className={`inline-block h-4 w-4 transform rounded-full transition-transform ${
-                        (!selectedClusterId || !canToggle) ? 'bg-slate-400' : 'bg-white'
-                      } ${
-                        isDeployed ? 'translate-x-6' : 'translate-x-1'
+                      className={`inline-block h-5 w-5 rounded-full shadow-md transition-all duration-300 ease-in-out ${
+                        (!selectedClusterId || !canToggle)
+                          ? 'bg-slate-400 translate-x-1'
+                          : isDeployed
+                          ? 'bg-white translate-x-6 shadow-lg'
+                          : 'bg-white translate-x-1'
                       }`}
                     />
                   )}

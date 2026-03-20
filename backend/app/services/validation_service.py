@@ -5,10 +5,29 @@ Validates Kyverno policies against schemas and best practices.
 """
 
 import yaml
+import re
 from typing import Dict, Any, List, Optional
 import logging
 
 logger = logging.getLogger(__name__)
+
+# RFC 1123 subdomain: lowercase alphanumeric, hyphens, max 253 chars
+K8S_NAME_PATTERN = re.compile(r'^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$')
+K8S_NAME_MAX_LENGTH = 253
+
+
+def validate_k8s_name(name: str) -> Optional[str]:
+    """Validate a Kubernetes resource name (RFC 1123 subdomain)."""
+    if not name:
+        return "Name cannot be empty"
+    if len(name) > K8S_NAME_MAX_LENGTH:
+        return f"Name must be {K8S_NAME_MAX_LENGTH} characters or fewer (got {len(name)})"
+    if not K8S_NAME_PATTERN.match(name):
+        return (
+            f"Invalid name '{name}': must consist of lowercase alphanumeric characters, "
+            "'-' or '.', and must start and end with an alphanumeric character"
+        )
+    return None
 
 
 class ValidationService:
@@ -112,6 +131,17 @@ class ValidationService:
         if not metadata.get("name"):
             result["valid"] = False
             result["errors"].append("Policy must have a name in metadata")
+        else:
+            name_error = validate_k8s_name(metadata["name"])
+            if name_error:
+                result["valid"] = False
+                result["errors"].append(f"metadata.name: {name_error}")
+        
+        # Warn if ClusterPolicy has namespace set (it's cluster-scoped)
+        if kind == "ClusterPolicy" and metadata.get("namespace"):
+            result["warnings"].append(
+                "ClusterPolicy is cluster-scoped and should not have a namespace in metadata"
+            )
         
         # Validate spec
         spec = policy.get("spec", {})
@@ -177,6 +207,24 @@ class ValidationService:
         # Check match
         if "match" not in rule:
             result["errors"].append(f"{rule_prefix}: Rule must have a 'match' block")
+        else:
+            match_block = rule["match"]
+            if isinstance(match_block, dict):
+                # Validate match block has at least one selector
+                valid_match_keys = {"resources", "any", "all", "subjects", "roles", "clusterRoles"}
+                if not any(k in match_block for k in valid_match_keys):
+                    result["warnings"].append(
+                        f"{rule_prefix}: 'match' block should contain at least one of: "
+                        f"{', '.join(sorted(valid_match_keys))}"
+                    )
+                # Validate resources block if present
+                resources = match_block.get("resources")
+                if isinstance(resources, dict):
+                    valid_resource_keys = {"kinds", "names", "namespaces", "selector", "annotations", "operations"}
+                    if "kinds" not in resources:
+                        result["warnings"].append(
+                            f"{rule_prefix}: match.resources should specify 'kinds' to target"
+                        )
         
         # Check for at least one action
         actions = ["validate", "mutate", "generate", "verifyImages"]

@@ -77,6 +77,9 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit, customToken?
           errorMessage = errorData.detail.map((err: any) => err.msg).join(', ');
         } else if (typeof errorData.detail === 'string') {
           errorMessage = errorData.detail;
+        } else if (typeof errorData.detail === 'object' && errorData.detail !== null) {
+          // Handle structured error objects (e.g. configuration_required)
+          errorMessage = errorData.detail.message || JSON.stringify(errorData.detail);
         }
       } catch {
         // Ignore parse errors
@@ -463,6 +466,13 @@ export async function checkDeploymentStatus(
     status: string;
     parameters: any;
   } | null;
+  namespace_deployments: Array<{
+    deployment_id: number;
+    namespace: string;
+    deployed_at: string;
+    status: string;
+    parameters: any;
+  }>;
 }>> {
   return fetchApi(`/policies/deployment-status/${policyId}/cluster/${clusterId}`);
 }
@@ -476,9 +486,9 @@ export async function quickDeployPolicy(
   message: string;
   deployment_id?: number;
 }>> {
-  return fetchApi(`/policies/quick-deploy/${policyId}/cluster/${clusterId}`, {
+  const params = new URLSearchParams({ namespace });
+  return fetchApi(`/policies/quick-deploy/${policyId}/cluster/${clusterId}?${params.toString()}`, {
     method: 'POST',
-    body: JSON.stringify({ namespace }),
   });
 }
 
@@ -535,6 +545,29 @@ export async function deployPolicy(request: {
   deployed_yaml?: string;
 }>> {
   return fetchApi('/policies/deploy', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export async function deployPolicyMulti(request: {
+  policy_id: number;
+  cluster_id: number;
+  namespace_configs: Array<{
+    namespace: string;
+    parameters?: Record<string, any>;
+  }>;
+}): Promise<ApiResponse<{
+  success: boolean;
+  message: string;
+  results: Array<{
+    namespace: string;
+    success: boolean;
+    message: string;
+    deployment_id?: number;
+  }>;
+}>> {
+  return fetchApi('/policies/deploy-multi', {
     method: 'POST',
     body: JSON.stringify(request),
   });

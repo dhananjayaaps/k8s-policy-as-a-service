@@ -20,6 +20,8 @@ from app.schemas import (
     PolicyResponse,
     PolicyDeployRequest,
     PolicyDeployResponse,
+    PolicyMultiDeployRequest,
+    PolicyMultiDeployResponse,
     PolicyDeploymentResponse,
     AuditLogResponse,
     ClusterStatsResponse,
@@ -196,46 +198,6 @@ async def delete_policy(policy_id: int, db: Session = Depends(get_db)):
     return {"message": f"Policy '{policy.name}' deleted"}
 
 
-# ============ Policy Validation ============
-
-@router.post("/validate")
-async def validate_policy(policy_yaml: str):
-    """
-    Validate a policy YAML without saving it.
-    """
-    validator = get_validation_service()
-    result = validator.validate_policy(policy_yaml)
-    return result
-
-
-@router.post("/render")
-async def render_policy_template(
-    template: str,
-    parameters: dict = None
-):
-    """
-    Render a policy template with parameters.
-    """
-    engine = get_template_engine()
-    
-    try:
-        rendered = engine.render(template, parameters or {})
-        
-        # Validate the rendered output
-        validator = get_validation_service()
-        validation_result = validator.validate_policy(rendered)
-        
-        return {
-            "rendered_yaml": rendered,
-            "validation": validation_result
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to render template: {str(e)}"
-        )
-
-
 # ============ Policy Validation & Rendering ============
 
 @router.post("/validate", response_model=PolicyValidateResponse)
@@ -322,11 +284,26 @@ async def deploy_policy(
                 detail=f"Failed to render policy template: {str(e)}"
             )
     
+    # Detect policy kind (ClusterPolicy vs Policy) from rendered YAML
+    policy_kind = None
+    try:
+        parsed = yaml.safe_load(yaml_content)
+        if parsed and isinstance(parsed, dict):
+            policy_kind = parsed.get("kind")
+    except yaml.YAMLError:
+        pass
+    
+    # ClusterPolicy is cluster-scoped — namespace is stored as "cluster-wide" for reference
+    effective_namespace = request.namespace
+    if policy_kind == "ClusterPolicy":
+        effective_namespace = "cluster-wide"
+        logger.info(f"ClusterPolicy detected — namespace ignored, storing as '{effective_namespace}'")
+    
     # Create deployment record
     deployment = PolicyDeployment(
         cluster_id=request.cluster_id,
         policy_id=request.policy_id,
-        namespace=request.namespace,
+        namespace=effective_namespace,
         status="pending",
         deployed_yaml=yaml_content,
         parameters=request.parameters,  # Store parameters for reuse
@@ -441,6 +418,64 @@ async def deploy_policy(
         )
 
 
+@router.post("/deploy-multi", response_model=PolicyMultiDeployResponse)
+async def deploy_policy_multi(
+    request: PolicyMultiDeployRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Deploy a policy template to multiple namespaces with per-namespace parameters.
+    Each namespace can have its own parameter set.
+    """
+    if not request.namespace_configs:
+        raise HTTPException(status_code=400, detail="At least one namespace configuration is required")
+
+    results = []
+    all_success = True
+
+    for ns_config in request.namespace_configs:
+        try:
+            deploy_request = PolicyDeployRequest(
+                policy_id=request.policy_id,
+                cluster_id=request.cluster_id,
+                namespace=ns_config.namespace,
+                parameters=ns_config.parameters,
+            )
+            response = await deploy_policy(deploy_request, db)
+            results.append({
+                "namespace": ns_config.namespace,
+                "success": response.success,
+                "message": response.message,
+                "deployment_id": response.deployment_id,
+            })
+        except HTTPException as e:
+            all_success = False
+            detail = e.detail if isinstance(e.detail, str) else str(e.detail)
+            results.append({
+                "namespace": ns_config.namespace,
+                "success": False,
+                "message": detail,
+                "deployment_id": None,
+            })
+        except Exception as e:
+            all_success = False
+            results.append({
+                "namespace": ns_config.namespace,
+                "success": False,
+                "message": str(e),
+                "deployment_id": None,
+            })
+
+    succeeded = sum(1 for r in results if r["success"])
+    total = len(results)
+
+    return PolicyMultiDeployResponse(
+        success=all_success,
+        message=f"Deployed to {succeeded}/{total} namespace(s)",
+        results=results,
+    )
+
+
 @router.get("/deployments", response_model=List[PolicyDeploymentResponse])
 async def list_deployments(
     cluster_id: int = None,
@@ -548,8 +583,40 @@ async def remove_deployment(deployment_id: int, db: Session = Depends(get_db)):
                 connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
                 connector.delete_policy(policy.name, namespace=deployment.namespace)
             except Exception as e:
-                # Log warning but proceed with database deletion
+                # K8s delete failed — mark as removal_failed so user knows
                 logger.warning(f"Failed to delete policy from cluster: {e}")
+                deployment.status = "removal_failed"
+                deployment.error_message = f"Failed to remove from cluster: {str(e)}"
+                deployment.updated_at = datetime.utcnow()
+                db.commit()
+                
+                return {
+                    "success": False,
+                    "message": f"Failed to remove policy from cluster: {str(e)}. "
+                               "The policy may still be active in the cluster."
+                }
+    
+    # Update deployment status to removed
+    deployment.status = "removed"
+    deployment.updated_at = datetime.utcnow()
+    db.commit()
+    
+    # Add audit log
+    audit = AuditLog(
+        action="policy_undeploy",
+        resource_type="policy_deployment",
+        resource_id=deployment.id,
+        details={
+            "policy_name": policy.name if policy else None,
+            "cluster_id": cluster.id if cluster else None,
+            "namespace": deployment.namespace
+        },
+        status="success"
+    )
+    db.add(audit)
+    db.commit()
+    
+    return {"success": True, "message": "Policy undeployed successfully"}
 
 
 @router.get("/deployment-status/{policy_id}/cluster/{cluster_id}")
@@ -572,12 +639,14 @@ async def check_deployment_status(
     if not policy:
         raise HTTPException(status_code=404, detail="Policy not found")
     
-    # Check current deployment
-    current_deployment = db.query(PolicyDeployment).filter(
+    # Check current deployment (any namespace)
+    current_deployments = db.query(PolicyDeployment).filter(
         PolicyDeployment.policy_id == policy_id,
         PolicyDeployment.cluster_id == cluster_id,
         PolicyDeployment.status == "deployed"
-    ).order_by(PolicyDeployment.created_at.desc()).first()
+    ).order_by(PolicyDeployment.created_at.desc()).all()
+    
+    current_deployment = current_deployments[0] if current_deployments else None
     
     # Check previous deployment for parameter reuse
     previous_deployment = db.query(PolicyDeployment).filter(
@@ -639,8 +708,19 @@ async def check_deployment_status(
         "requires_config": requires_config,
         "has_previous_config": has_previous_config,
         "parameters": parameter_info,
-        "deployment_info": None
+        "deployment_info": None,
+        "namespace_deployments": []
     }
+    
+    # Build per-namespace deployment info
+    for dep in current_deployments:
+        response["namespace_deployments"].append({
+            "deployment_id": dep.id,
+            "namespace": dep.namespace,
+            "deployed_at": dep.deployed_at,
+            "status": dep.status,
+            "parameters": dep.parameters
+        })
     
     if current_deployment:
         response["deployment_info"] = {
@@ -649,6 +729,15 @@ async def check_deployment_status(
             "deployed_at": current_deployment.deployed_at,
             "status": current_deployment.status,
             "parameters": current_deployment.parameters
+        }
+    elif previous_deployment and previous_deployment.parameters:
+        # Return previous deployment info so the UI can show last-used values
+        response["deployment_info"] = {
+            "deployment_id": previous_deployment.id,
+            "namespace": previous_deployment.namespace,
+            "deployed_at": previous_deployment.deployed_at,
+            "status": previous_deployment.status,
+            "parameters": previous_deployment.parameters
         }
     
     return response
@@ -797,45 +886,43 @@ async def quick_undeploy_policy(
 ):
     """
     Quick undeploy a policy from a cluster.
+    Removes ALL deployed instances across all namespaces.
     Used by marketplace toggle switch.
     """
-    # Find the deployed instance
-    deployment = db.query(PolicyDeployment).filter(
+    # Find all deployed instances for this policy+cluster
+    deployments = db.query(PolicyDeployment).filter(
         PolicyDeployment.policy_id == policy_id,
         PolicyDeployment.cluster_id == cluster_id,
         PolicyDeployment.status == "deployed"
-    ).order_by(PolicyDeployment.created_at.desc()).first()
+    ).order_by(PolicyDeployment.created_at.desc()).all()
     
-    if not deployment:
+    if not deployments:
         raise HTTPException(
             status_code=404,
             detail="No active deployment found for this policy in this cluster"
         )
     
-    # Undeploy using the existing delete endpoint logic
-    return await remove_deployment(deployment.id, db)
+    # Undeploy each instance
+    results = []
+    any_failed = False
+    for deployment in deployments:
+        result = await remove_deployment(deployment.id, db)
+        if not result.get("success", False):
+            any_failed = True
+        results.append({"namespace": deployment.namespace, **result})
     
-    # Update deployment status
-    deployment.status = "removed"
-    deployment.updated_at = datetime.utcnow()
-    db.commit()
+    if any_failed:
+        return {
+            "success": False,
+            "message": f"Some deployments failed to remove. Check cluster for remaining policies.",
+            "results": results,
+        }
     
-    # Add audit log
-    audit = AuditLog(
-        action="policy_undeploy",
-        resource_type="policy_deployment",
-        resource_id=deployment.id,
-        details={
-            "policy_name": policy.name if policy else None,
-            "cluster_id": cluster.id if cluster else None,
-            "namespace": deployment.namespace
-        },
-        status="success"
-    )
-    db.add(audit)
-    db.commit()
-    
-    return {"success": True, "message": "Deployment removed"}
+    return {
+        "success": True,
+        "message": f"Policy undeployed from {len(deployments)} namespace(s)",
+        "results": results,
+    }
 
 
 @router.get("/cluster/{cluster_id}/kyverno-policies")
