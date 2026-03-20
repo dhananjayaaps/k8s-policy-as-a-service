@@ -238,6 +238,105 @@ export async function togglePolicyStatus(id: string, isActive: boolean): Promise
   return updatePolicy(id, { is_active: isActive });
 }
 
+export async function checkDeploymentStatus(
+  policyId: string,
+  clusterId: string
+): Promise<ApiResponse<{
+  deployed: boolean;
+  can_quick_deploy: boolean;
+  requires_config: boolean;
+  has_previous_config: boolean;
+  parameters: Array<{
+    name: string;
+    type: string;
+    required: boolean;
+    has_default: boolean;
+    description: string;
+  }>;
+  deployment_info: {
+    deployment_id: number;
+    namespace: string;
+    deployed_at: string;
+    status: string;
+    parameters: any;
+  } | null;
+}>> {
+  return fetchApi(`/policies/deployment-status/${policyId}/cluster/${clusterId}`);
+}
+
+export async function quickDeployPolicy(
+  policyId: string,
+  clusterId: string,
+  namespace: string = 'default'
+): Promise<ApiResponse<{
+  success: boolean;
+  message: string;
+  deployment_id?: number;
+}>> {
+  return fetchApi(`/policies/quick-deploy/${policyId}/cluster/${clusterId}`, {
+    method: 'POST',
+    body: JSON.stringify({ namespace }),
+  });
+}
+
+export async function quickUndeployPolicy(
+  policyId: string,
+  clusterId: string
+): Promise<ApiResponse<{
+  success: boolean;
+  message: string;
+}>> {
+  return fetchApi(`/policies/quick-undeploy/${policyId}/cluster/${clusterId}`, {
+    method: 'POST',
+  });
+}
+
+export async function validatePolicy(yamlContent: string): Promise<ApiResponse<{
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  info: Record<string, any>;
+}>> {
+  return fetchApi('/policies/validate', {
+    method: 'POST',
+    body: JSON.stringify({ yaml_content: yamlContent }),
+  });
+}
+
+export async function renderPolicyTemplate(
+  yamlTemplate: string,
+  parameters: Record<string, any>
+): Promise<ApiResponse<{
+  success: boolean;
+  rendered_yaml: string | null;
+  error: string | null;
+}>> {
+  return fetchApi('/policies/render', {
+    method: 'POST',
+    body: JSON.stringify({
+      yaml_template: yamlTemplate,
+      parameters,
+    }),
+  });
+}
+
+export async function deployPolicy(request: {
+  policy_id: number;
+  cluster_id?: number;
+  namespace: string;
+  parameters?: Record<string, any>;
+}): Promise<ApiResponse<{
+  success: boolean;
+  message: string;
+  deployment_id?: number;
+  deployed_yaml?: string;
+}>> {
+  return fetchApi('/policies/deploy', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
 // ============== Audit Logs API ==============
 
 export async function getAuditLogs(options?: {

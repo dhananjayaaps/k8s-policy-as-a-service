@@ -65,17 +65,18 @@ class Policy(Base):
     __tablename__ = "policies"
     
     id = Column(Integer, primary_key=True, index=True)
-    cluster_id = Column(Integer, ForeignKey("clusters.id"), nullable=True)  # Cluster-specific policy
     name = Column(String(255), nullable=False)
+    title = Column(String(255), nullable=True)  # Display name for UI
     category = Column(String(100), nullable=True)  # e.g., "security", "best-practices"
     description = Column(Text, nullable=True)
+    severity = Column(String(50), nullable=True, default="medium")  # low, medium, high
     yaml_template = Column(Text, nullable=False)
     parameters = Column(JSON, nullable=True)  # JSON schema for policy parameters
+    is_active = Column(Boolean, default=True)  # Whether policy is globally available
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    cluster = relationship("Cluster")
     deployments = relationship("PolicyDeployment", back_populates="policy")
 
 
@@ -89,6 +90,7 @@ class PolicyDeployment(Base):
     namespace = Column(String(255), default="default")
     status = Column(String(50), default="pending")  # pending, deployed, failed, removed
     deployed_yaml = Column(Text, nullable=True)  # Actual YAML deployed
+    parameters = Column(JSON, nullable=True)  # Parameters used for deployment (for reuse)
     error_message = Column(Text, nullable=True)
     deployed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

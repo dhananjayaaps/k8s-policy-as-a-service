@@ -97,11 +97,13 @@ class NamespaceListResponse(BaseModel):
 
 class PolicyBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
-    cluster_id: int = Field(..., description="ID of the cluster this policy belongs to")
+    title: Optional[str] = None
     category: Optional[str] = None
     description: Optional[str] = None
+    severity: Optional[str] = Field(default="medium", pattern="^(low|medium|high)$")
     yaml_template: str
     parameters: Optional[Dict[str, Any]] = None
+    is_active: bool = True
 
 
 class PolicyCreate(PolicyBase):
@@ -110,16 +112,17 @@ class PolicyCreate(PolicyBase):
 
 class PolicyUpdate(BaseModel):
     name: Optional[str] = None
-    cluster_id: Optional[int] = None
+    title: Optional[str] = None
     category: Optional[str] = None
     description: Optional[str] = None
+    severity: Optional[str] = Field(None, pattern="^(low|medium|high)$")
     yaml_template: Optional[str] = None
     parameters: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
 
 
 class PolicyResponse(PolicyBase):
     id: int
-    cluster_id: int
     created_at: datetime
     updated_at: datetime
     
@@ -141,6 +144,32 @@ class PolicyDeployResponse(BaseModel):
     message: str
     deployment_id: Optional[int] = None
     deployed_yaml: Optional[str] = None
+
+
+class PolicyValidateRequest(BaseModel):
+    """Request to validate policy YAML"""
+    yaml_content: str = Field(..., description="YAML content to validate")
+
+
+class PolicyValidateResponse(BaseModel):
+    """Response after validating policy YAML"""
+    valid: bool
+    errors: List[str] = []
+    warnings: List[str] = []
+    info: Dict[str, Any] = {}
+
+
+class PolicyRenderRequest(BaseModel):
+    """Request to render policy template with parameters"""
+    yaml_template: str = Field(..., description="Policy YAML template")
+    parameters: Dict[str, Any] = Field(..., description="Parameters to render into template")
+
+
+class PolicyRenderResponse(BaseModel):
+    """Response after rendering policy template"""
+    success: bool
+    rendered_yaml: Optional[str] = None
+    error: Optional[str] = None
 
 
 # ============ Policy Deployment Schemas ============

@@ -23,6 +23,10 @@ from app.schemas import (
     PolicyDeploymentResponse,
     AuditLogResponse,
     ClusterStatsResponse,
+    PolicyValidateRequest,
+    PolicyValidateResponse,
+    PolicyRenderRequest,
+    PolicyRenderResponse,
 )
 from app.services.k8s_connector import get_k8s_connector
 from app.services.template_engine import get_template_engine
@@ -41,16 +45,9 @@ logger = logging.getLogger(__name__)
 @router.post("/", response_model=PolicyResponse)
 async def create_policy(policy: PolicyCreate, db: Session = Depends(get_db)):
     """
-    Create a new policy template for a specific cluster.
+    Create a new generalized policy template.
+    Templates can be deployed to any cluster via the deployment API.
     """
-    # Check if cluster exists
-    cluster = db.query(Cluster).filter(Cluster.id == policy.cluster_id).first()
-    if not cluster:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Cluster with ID {policy.cluster_id} not found"
-        )
-    
     # Validate the policy YAML
     validator = get_validation_service()
     validation_result = validator.validate_policy(policy.yaml_template)
@@ -64,15 +61,12 @@ async def create_policy(policy: PolicyCreate, db: Session = Depends(get_db)):
             }
         )
     
-    # Check if policy with same name exists in this cluster
-    existing = db.query(Policy).filter(
-        Policy.name == policy.name,
-        Policy.cluster_id == policy.cluster_id
-    ).first()
+    # Check if policy with same name already exists
+    existing = db.query(Policy).filter(Policy.name == policy.name).first()
     if existing:
         raise HTTPException(
             status_code=400,
-            detail=f"Policy with name '{policy.name}' already exists in cluster '{cluster.name}'"
+            detail=f"Policy with name '{policy.name}' already exists. Please use a unique name."
         )
     
     db_policy = Policy(**policy.model_dump())
@@ -88,8 +82,7 @@ async def create_policy(policy: PolicyCreate, db: Session = Depends(get_db)):
         details={
             "name": policy.name,
             "category": policy.category,
-            "cluster_id": policy.cluster_id,
-            "cluster_name": cluster.name
+            "title": policy.title
         },
         status="success"
     )
@@ -101,44 +94,16 @@ async def create_policy(policy: PolicyCreate, db: Session = Depends(get_db)):
 
 @router.get("/", response_model=List[PolicyResponse])
 async def list_policies(
-    cluster_id: int = None,
     skip: int = 0,
     limit: int = 100,
     category: str = None,
     db: Session = Depends(get_db)
 ):
     """
-    List policy templates. Filter by cluster_id to get cluster-specific policies.
+    List all generalized policy templates.
+    These templates can be deployed to any cluster.
     """
     query = db.query(Policy)
-    
-    if cluster_id:
-        query = query.filter(Policy.cluster_id == cluster_id)
-    
-    if category:
-        query = query.filter(Policy.category == category)
-    
-    policies = query.offset(skip).limit(limit).all()
-    return policies
-
-
-@router.get("/cluster/{cluster_id}", response_model=List[PolicyResponse])
-async def list_cluster_policies(
-    cluster_id: int,
-    skip: int = 0,
-    limit: int = 100,
-    category: str = None,
-    db: Session = Depends(get_db)
-):
-    """
-    Get all policies for a specific cluster.
-    """
-    # Verify cluster exists
-    cluster = db.query(Cluster).filter(Cluster.id == cluster_id).first()
-    if not cluster:
-        raise HTTPException(status_code=404, detail="Cluster not found")
-    
-    query = db.query(Policy).filter(Policy.cluster_id == cluster_id)
     
     if category:
         query = query.filter(Policy.category == category)
@@ -271,6 +236,52 @@ async def render_policy_template(
         )
 
 
+# ============ Policy Validation & Rendering ============
+
+@router.post("/validate", response_model=PolicyValidateResponse)
+async def validate_policy_yaml(
+    request: PolicyValidateRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Validate policy YAML syntax and structure.
+    """
+    validator = get_validation_service()
+    result = validator.validate_policy(request.yaml_content)
+    
+    return PolicyValidateResponse(
+        valid=result["valid"],
+        errors=result.get("errors", []),
+        warnings=result.get("warnings", []),
+        info=result.get("info", {})
+    )
+
+
+@router.post("/render", response_model=PolicyRenderResponse)
+async def render_policy_template(
+    request: PolicyRenderRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Render policy template with provided parameters.
+    """
+    engine = get_template_engine()
+    
+    try:
+        rendered = engine.render(request.yaml_template, request.parameters)
+        return PolicyRenderResponse(
+            success=True,
+            rendered_yaml=rendered,
+            error=None
+        )
+    except Exception as e:
+        return PolicyRenderResponse(
+            success=False,
+            rendered_yaml=None,
+            error=str(e)
+        )
+
+
 # ============ Policy Deployment ============
 
 @router.post("/deploy", response_model=PolicyDeployResponse)
@@ -279,31 +290,22 @@ async def deploy_policy(
     db: Session = Depends(get_db)
 ):
     """
-    Deploy a policy to its associated cluster.
-    The cluster_id is taken from the policy, or can be overridden in the request.
+    Deploy a policy template to a specific cluster.
+    cluster_id must be provided in the request.
     """
-    # Get policy
+    # Get policy template
     policy = db.query(Policy).filter(Policy.id == request.policy_id).first()
     if not policy:
         raise HTTPException(status_code=404, detail="Policy not found")
     
-    # Use policy's cluster_id if not specified in request
-    target_cluster_id = request.cluster_id if request.cluster_id else policy.cluster_id
-    
-    if not target_cluster_id:
+    # cluster_id is now required in the request
+    if not request.cluster_id:
         raise HTTPException(
             status_code=400,
-            detail="Policy has no cluster_id and none was provided in request"
+            detail="cluster_id is required to deploy a policy template"
         )
     
-    # Validate that if cluster_id is provided, it matches the policy's cluster
-    if request.cluster_id and policy.cluster_id and request.cluster_id != policy.cluster_id:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Policy belongs to cluster {policy.cluster_id}, cannot deploy to cluster {request.cluster_id}"
-        )
-    
-    cluster = db.query(Cluster).filter(Cluster.id == target_cluster_id).first()
+    cluster = db.query(Cluster).filter(Cluster.id == request.cluster_id).first()
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
     
@@ -322,11 +324,12 @@ async def deploy_policy(
     
     # Create deployment record
     deployment = PolicyDeployment(
-        cluster_id=target_cluster_id,
+        cluster_id=request.cluster_id,
         policy_id=request.policy_id,
         namespace=request.namespace,
         status="pending",
         deployed_yaml=yaml_content,
+        parameters=request.parameters,  # Store parameters for reuse
     )
     db.add(deployment)
     db.commit()
@@ -334,7 +337,7 @@ async def deploy_policy(
     
     # Get service account token for cluster
     sa_token = db.query(ServiceAccountToken).filter(
-        ServiceAccountToken.cluster_id == target_cluster_id,
+        ServiceAccountToken.cluster_id == request.cluster_id,
         ServiceAccountToken.is_active == True
     ).first()
     
@@ -547,6 +550,270 @@ async def remove_deployment(deployment_id: int, db: Session = Depends(get_db)):
             except Exception as e:
                 # Log warning but proceed with database deletion
                 logger.warning(f"Failed to delete policy from cluster: {e}")
+
+
+@router.get("/deployment-status/{policy_id}/cluster/{cluster_id}")
+async def check_deployment_status(
+    policy_id: int,
+    cluster_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Check deployment status and configuration requirements for a policy.
+    
+    Returns:
+    - deployed: Whether policy is currently deployed
+    - can_quick_deploy: Whether toggle can deploy directly or requires editor
+    - requires_config: Whether policy needs parameter configuration
+    - has_previous_config: Whether policy was deployed before (can reuse params)
+    - deployment_info: Details about current/previous deployment
+    """
+    policy = db.query(Policy).filter(Policy.id == policy_id).first()
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    
+    # Check current deployment
+    current_deployment = db.query(PolicyDeployment).filter(
+        PolicyDeployment.policy_id == policy_id,
+        PolicyDeployment.cluster_id == cluster_id,
+        PolicyDeployment.status == "deployed"
+    ).order_by(PolicyDeployment.created_at.desc()).first()
+    
+    # Check previous deployment for parameter reuse
+    previous_deployment = db.query(PolicyDeployment).filter(
+        PolicyDeployment.policy_id == policy_id,
+        PolicyDeployment.cluster_id == cluster_id
+    ).order_by(PolicyDeployment.created_at.desc()).first()
+    
+    # Determine if policy requires configuration
+    requires_config = False
+    can_quick_deploy = True
+    parameter_info = []
+    
+    if policy.parameters:
+        try:
+            import json
+            params = policy.parameters if isinstance(policy.parameters, dict) else json.loads(policy.parameters)
+            
+            # Ensure params is a dictionary
+            if isinstance(params, dict):
+                for param_name, param_def in params.items():
+                    # Ensure param_def is a dictionary
+                    if isinstance(param_def, dict):
+                        has_default = param_def.get('default') is not None
+                        parameter_info.append({
+                            "name": param_name,
+                            "type": param_def.get('type', 'string'),
+                            "required": param_def.get('required', False),
+                            "has_default": has_default,
+                            "description": param_def.get('description', '')
+                        })
+                        
+                        if not has_default:
+                            requires_config = True
+                    else:
+                        # param_def is not a dict, treat as requiring config
+                        requires_config = True
+                        parameter_info.append({
+                            "name": param_name,
+                            "type": "string",
+                            "required": True,
+                            "has_default": False,
+                            "description": ""
+                        })
+            else:
+                requires_config = True
+        except:
+            requires_config = True
+    
+    # Can quick deploy if:
+    # 1. Already deployed (will be no-op), OR
+    # 2. Has previous deployment with params (will reuse), OR
+    # 3. No configuration required (all params have defaults or no params)
+    has_previous_config = previous_deployment is not None and previous_deployment.parameters is not None
+    can_quick_deploy = current_deployment is not None or has_previous_config or not requires_config
+    
+    response = {
+        "deployed": current_deployment is not None,
+        "can_quick_deploy": can_quick_deploy,
+        "requires_config": requires_config,
+        "has_previous_config": has_previous_config,
+        "parameters": parameter_info,
+        "deployment_info": None
+    }
+    
+    if current_deployment:
+        response["deployment_info"] = {
+            "deployment_id": current_deployment.id,
+            "namespace": current_deployment.namespace,
+            "deployed_at": current_deployment.deployed_at,
+            "status": current_deployment.status,
+            "parameters": current_deployment.parameters
+        }
+    
+    return response
+
+
+@router.post("/quick-deploy/{policy_id}/cluster/{cluster_id}")
+async def quick_deploy_policy(
+    policy_id: int,
+    cluster_id: int,
+    namespace: str = "default",
+    db: Session = Depends(get_db)
+):
+    """
+    Smart deploy a policy to a cluster.
+    
+    Behavior:
+    1. If policy already deployed → Return success (no-op)
+    2. If policy was deployed before → Reuse last successful parameters
+    3. If new deployment and policy has parameters → Return error (requires configuration via editor)
+    4. If no parameters needed → Deploy with defaults
+    """
+    # Get policy
+    policy = db.query(Policy).filter(Policy.id == policy_id).first()
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    
+    # Check if already deployed
+    existing = db.query(PolicyDeployment).filter(
+        PolicyDeployment.policy_id == policy_id,
+        PolicyDeployment.cluster_id == cluster_id,
+        PolicyDeployment.status == "deployed"
+    ).first()
+    
+    if existing:
+        return PolicyDeployResponse(
+            success=True,
+            message="Policy already deployed to this cluster",
+            deployment_id=existing.id
+        )
+    
+    # Check for previous deployment to reuse parameters
+    previous_deployment = db.query(PolicyDeployment).filter(
+        PolicyDeployment.policy_id == policy_id,
+        PolicyDeployment.cluster_id == cluster_id,
+        PolicyDeployment.status.in_(["deployed", "removed"])
+    ).order_by(PolicyDeployment.created_at.desc()).first()
+    
+    parameters_to_use = None
+    
+    if previous_deployment and previous_deployment.parameters:
+        # Reuse previous successful parameters
+        parameters_to_use = previous_deployment.parameters
+        logger.info(f"Reusing previous parameters for policy {policy_id}")
+    else:
+        # Check if policy requires parameters
+        if policy.parameters:
+            # Policy has parameter definitions - check if configuration is needed
+            requires_config = False
+            param_info = []
+            
+            try:
+                import json
+                if isinstance(policy.parameters, str):
+                    params = json.loads(policy.parameters)
+                else:
+                    params = policy.parameters
+                
+                # Validate params is a dictionary
+                if not isinstance(params, dict):
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "error": "configuration_required",
+                            "message": "This policy requires configuration before deployment",
+                            "action": "open_editor"
+                        }
+                    )
+                
+                # Check if any parameters lack default values
+                for param_name, param_def in params.items():
+                    # Ensure param_def is a dictionary
+                    if not isinstance(param_def, dict):
+                        # If param_def is not a dict, treat as requiring configuration
+                        requires_config = True
+                        param_info.append({
+                            "name": param_name,
+                            "required": True,
+                            "has_default": False
+                        })
+                        continue
+                    
+                    has_default = param_def.get('default') is not None
+                    param_info.append({
+                        "name": param_name,
+                        "required": param_def.get('required', False),
+                        "has_default": has_default
+                    })
+                    
+                    if not has_default:
+                        requires_config = True
+                
+                if requires_config:
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "error": "configuration_required",
+                            "message": "This policy requires configuration before deployment",
+                            "parameters": param_info,
+                            "action": "open_editor"
+                        }
+                    )
+                else:
+                    # All parameters have defaults, use them
+                    parameters_to_use = {}
+                    for p, p_def in params.items():
+                        if isinstance(p_def, dict) and 'default' in p_def:
+                            parameters_to_use[p] = p_def['default']
+                    
+            except json.JSONDecodeError:
+                # If parameters field is malformed, require configuration
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "configuration_required",
+                        "message": "This policy requires configuration before deployment",
+                        "action": "open_editor"
+                    }
+                )
+    
+    # Deploy with determined parameters
+    request = PolicyDeployRequest(
+        policy_id=policy_id,
+        cluster_id=cluster_id,
+        namespace=namespace,
+        parameters=parameters_to_use
+    )
+    
+    return await deploy_policy(request, db)
+
+
+@router.post("/quick-undeploy/{policy_id}/cluster/{cluster_id}")
+async def quick_undeploy_policy(
+    policy_id: int,
+    cluster_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Quick undeploy a policy from a cluster.
+    Used by marketplace toggle switch.
+    """
+    # Find the deployed instance
+    deployment = db.query(PolicyDeployment).filter(
+        PolicyDeployment.policy_id == policy_id,
+        PolicyDeployment.cluster_id == cluster_id,
+        PolicyDeployment.status == "deployed"
+    ).order_by(PolicyDeployment.created_at.desc()).first()
+    
+    if not deployment:
+        raise HTTPException(
+            status_code=404,
+            detail="No active deployment found for this policy in this cluster"
+        )
+    
+    # Undeploy using the existing delete endpoint logic
+    return await remove_deployment(deployment.id, db)
     
     # Update deployment status
     deployment.status = "removed"
@@ -685,9 +952,10 @@ async def get_cluster_stats(cluster_id: int, db: Session = Depends(get_db)):
     seven_days_ago = datetime.utcnow() - timedelta(days=7)
     
     # ============ Policy Counts ============
-    active_policies_count = db.query(Policy).filter(
-        Policy.cluster_id == cluster_id
-    ).count()
+    # Count distinct policies deployed to this cluster
+    active_policies_count = db.query(func.count(distinct(PolicyDeployment.policy_id))).filter(
+        PolicyDeployment.cluster_id == cluster_id
+    ).scalar() or 0
     
     total_deployments = db.query(PolicyDeployment).filter(
         PolicyDeployment.cluster_id == cluster_id
@@ -756,10 +1024,12 @@ async def get_cluster_stats(cluster_id: int, db: Session = Depends(get_db)):
     
     # Security Score (0-100)
     # Based on: security policies deployed, low security violations
-    security_policies = db.query(Policy).filter(
-        Policy.cluster_id == cluster_id,
+    # Count security policies deployed to this cluster
+    security_policies = db.query(func.count(distinct(PolicyDeployment.policy_id))).filter(
+        PolicyDeployment.cluster_id == cluster_id
+    ).join(Policy).filter(
         Policy.category.in_(["security", "best-practices", "pod-security"])
-    ).count()
+    ).scalar() or 0
     
     security_deployments = db.query(PolicyDeployment).filter(
         PolicyDeployment.cluster_id == cluster_id,
@@ -775,10 +1045,12 @@ async def get_cluster_stats(cluster_id: int, db: Session = Depends(get_db)):
     
     # Cost Score (0-100)
     # Based on: resource limit policies, cost-related policies
-    cost_policies = db.query(Policy).filter(
-        Policy.cluster_id == cluster_id,
+    # Count cost policies deployed to this cluster
+    cost_policies = db.query(func.count(distinct(PolicyDeployment.policy_id))).filter(
+        PolicyDeployment.cluster_id == cluster_id
+    ).join(Policy).filter(
         Policy.category.in_(["resource-management", "cost-optimization"])
-    ).count()
+    ).scalar() or 0
     
     cost_deployments = db.query(PolicyDeployment).filter(
         PolicyDeployment.cluster_id == cluster_id,
