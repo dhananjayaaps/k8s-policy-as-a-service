@@ -678,36 +678,45 @@ export async function deletePolicyById(id: number): Promise<ApiResponse<{ messag
 // ============== Audit Logs API ==============
 
 export async function getAuditLogs(options?: {
+  action?: string;
+  resource_type?: string;
+  status?: string;
+  search?: string;
+  skip?: number;
   limit?: number;
-  orderBy?: 'timestamp';
-  order?: 'asc' | 'desc';
 }): Promise<ApiResponse<AuditLog[]>> {
   if (API_CONFIG.useMockData) {
     await simulateDelay();
     let logs = [...(mockAuditLogs as any)] as AuditLog[];
-    
-    // Sort by timestamp (mock data uses 'timestamp', real API uses 'created_at')
-    if (options?.orderBy === 'timestamp') {
-      logs.sort((a: any, b: any) => {
-        const comparison = new Date(a.timestamp || a.created_at).getTime() - new Date(b.timestamp || b.created_at).getTime();
-        return options.order === 'asc' ? comparison : -comparison;
-      });
-    }
-    
-    // Apply limit
     if (options?.limit) {
       logs = logs.slice(0, options.limit);
     }
-    
     return { data: logs, error: null, status: 200 };
   }
   
   const params = new URLSearchParams();
+  if (options?.action) params.append('action', options.action);
+  if (options?.resource_type) params.append('resource_type', options.resource_type);
+  if (options?.status) params.append('status', options.status);
+  if (options?.search) params.append('search', options.search);
+  if (options?.skip !== undefined) params.append('skip', options.skip.toString());
   if (options?.limit) params.append('limit', options.limit.toString());
-  if (options?.orderBy) params.append('orderBy', options.orderBy);
-  if (options?.order) params.append('order', options.order);
   
   return fetchApi<AuditLog[]>(`/policies/audit-logs?${params.toString()}`);
+}
+
+export async function getAuditLogStats(): Promise<ApiResponse<{
+  total: number;
+  success_count: number;
+  failure_count: number;
+  actions: Record<string, number>;
+  resource_types: Record<string, number>;
+}>> {
+  if (API_CONFIG.useMockData) {
+    await simulateDelay();
+    return { data: { total: 0, success_count: 0, failure_count: 0, actions: {}, resource_types: {} }, error: null, status: 200 };
+  }
+  return fetchApi('/policies/audit-logs/stats');
 }
 
 export async function getAuditLogsByCluster(clusterId: string): Promise<ApiResponse<AuditLog[]>> {

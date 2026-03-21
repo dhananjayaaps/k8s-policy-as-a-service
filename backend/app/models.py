@@ -108,6 +108,8 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
     
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=True)
+    username = Column(String(255), nullable=True)
     action = Column(String(100), nullable=False)  # e.g., "cluster_connect", "policy_deploy"
     resource_type = Column(String(100), nullable=True)
     resource_id = Column(Integer, nullable=True)

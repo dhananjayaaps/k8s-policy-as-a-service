@@ -25,6 +25,7 @@ from app.schemas import (
     PolicyMultiDeployResponse,
     PolicyDeploymentResponse,
     AuditLogResponse,
+    AuditLogStatsResponse,
     ClusterStatsResponse,
     PolicyValidateRequest,
     PolicyValidateResponse,
@@ -132,6 +133,85 @@ async def list_policies(
     
     policies = query.offset(skip).limit(limit).all()
     return policies
+
+
+# ============ Audit Logs ============
+
+@router.get("/audit-logs", response_model=List[AuditLogResponse])
+async def get_audit_logs(
+    action: str = None,
+    resource_type: str = None,
+    status: str = None,
+    search: str = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """
+    Get audit logs for policy operations.
+
+    Query Parameters:
+    - action: Filter by action (e.g., policy_create, policy_deploy, policy_undeploy)
+    - resource_type: Filter by resource type (e.g., policy, policy_deployment)
+    - status: Filter by status (success, failure)
+    - search: Search in action, resource_type, username, error_message
+    - skip: Number of records to skip
+    - limit: Maximum records to return
+    """
+    query = db.query(AuditLog)
+
+    if action:
+        query = query.filter(AuditLog.action == action)
+    if resource_type:
+        query = query.filter(AuditLog.resource_type == resource_type)
+    if status:
+        query = query.filter(AuditLog.status == status)
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(
+            (AuditLog.action.ilike(search_term)) |
+            (AuditLog.resource_type.ilike(search_term)) |
+            (AuditLog.username.ilike(search_term)) |
+            (AuditLog.error_message.ilike(search_term))
+        )
+
+    # Order by most recent first
+    query = query.order_by(AuditLog.created_at.desc())
+
+    logs = query.offset(skip).limit(limit).all()
+    return logs
+
+
+@router.get("/audit-logs/stats", response_model=AuditLogStatsResponse)
+async def get_audit_log_stats(
+    db: Session = Depends(get_db)
+):
+    """
+    Get audit log statistics - total counts, actions breakdown, etc.
+    """
+    from sqlalchemy import func
+
+    total = db.query(func.count(AuditLog.id)).scalar() or 0
+    success_count = db.query(func.count(AuditLog.id)).filter(AuditLog.status == "success").scalar() or 0
+    failure_count = db.query(func.count(AuditLog.id)).filter(AuditLog.status == "failure").scalar() or 0
+
+    # Count by action
+    action_rows = db.query(AuditLog.action, func.count(AuditLog.id)).group_by(AuditLog.action).all()
+    actions = {row[0]: row[1] for row in action_rows}
+
+    # Count by resource_type
+    rt_rows = db.query(AuditLog.resource_type, func.count(AuditLog.id)).filter(
+        AuditLog.resource_type.isnot(None)
+    ).group_by(AuditLog.resource_type).all()
+    resource_types = {row[0]: row[1] for row in rt_rows}
+
+    return AuditLogStatsResponse(
+        total=total,
+        success_count=success_count,
+        failure_count=failure_count,
+        actions=actions,
+        resource_types=resource_types,
+    )
 
 
 @router.get("/{policy_id}", response_model=PolicyResponse)
@@ -1007,43 +1087,6 @@ async def list_kyverno_policies(cluster_id: int, db: Session = Depends(get_db)):
             status_code=500,
             detail=f"Failed to list Kyverno policies: {str(e)}"
         )
-
-
-# ============ Audit Logs ============
-
-@router.get("/audit-logs", response_model=List[AuditLogResponse])
-async def get_audit_logs(
-    action: str = None,
-    resource_type: str = None,
-    status: str = None,
-    skip: int = 0,
-    limit: int = 100,
-    db: Session = Depends(get_db)
-):
-    """
-    Get audit logs for policy operations.
-    
-    Query Parameters:
-    - action: Filter by action (e.g., policy_create, policy_deploy, policy_undeploy)
-    - resource_type: Filter by resource type (e.g., policy, policy_deployment)
-    - status: Filter by status (success, failure)
-    - skip: Number of records to skip
-    - limit: Maximum records to return
-    """
-    query = db.query(AuditLog)
-    
-    if action:
-        query = query.filter(AuditLog.action == action)
-    if resource_type:
-        query = query.filter(AuditLog.resource_type == resource_type)
-    if status:
-        query = query.filter(AuditLog.status == status)
-    
-    # Order by most recent first
-    query = query.order_by(AuditLog.created_at.desc())
-    
-    logs = query.offset(skip).limit(limit).all()
-    return logs
 
 
 @router.get("/cluster/{cluster_id}/stats", response_model=ClusterStatsResponse)

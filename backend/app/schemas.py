@@ -264,6 +264,8 @@ class PolicyDeploymentResponse(BaseModel):
 
 class AuditLogResponse(BaseModel):
     id: int
+    user_id: Optional[int] = None
+    username: Optional[str] = None
     action: str
     resource_type: Optional[str] = None
     resource_id: Optional[int] = None
@@ -274,6 +276,14 @@ class AuditLogResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+class AuditLogStatsResponse(BaseModel):
+    total: int
+    success_count: int
+    failure_count: int
+    actions: Dict[str, int] = {}
+    resource_types: Dict[str, int] = {}
 
 
 # ============ Report Schemas ============

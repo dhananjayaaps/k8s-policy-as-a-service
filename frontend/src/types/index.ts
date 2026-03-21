@@ -138,6 +138,8 @@ export type Policy = {
 
 export type AuditLog = {
   id: number;
+  user_id: number | null;
+  username: string | null;
   action: string;
   resource_type: string | null;
   resource_id: number | null;
