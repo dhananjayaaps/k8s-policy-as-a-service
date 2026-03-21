@@ -30,6 +30,9 @@ from app.schemas import (
     PolicyValidateResponse,
     PolicyRenderRequest,
     PolicyRenderResponse,
+    PolicyTestRequest,
+    PolicyTestResponse,
+    PolicyTestRuleResult,
 )
 from app.services.k8s_connector import get_k8s_connector
 from app.services.template_engine import get_template_engine
@@ -233,6 +236,32 @@ async def validate_policy_yaml(
         errors=result.get("errors", []),
         warnings=result.get("warnings", []),
         info=result.get("info", {})
+    )
+
+
+@router.post("/test-resource", response_model=PolicyTestResponse)
+async def test_policy_against_resource(
+    request: PolicyTestRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Test a Kyverno policy against a Kubernetes resource YAML.
+    Returns per-rule pass/fail/skip results.
+    """
+    validator = get_validation_service()
+    result = validator.test_resource_against_policy(
+        request.policy_yaml, request.resource_yaml
+    )
+    return PolicyTestResponse(
+        success=result["success"],
+        policy_valid=result["policy_valid"],
+        resource_valid=result["resource_valid"],
+        policy_errors=result["policy_errors"],
+        resource_errors=result["resource_errors"],
+        results=[
+            PolicyTestRuleResult(**r) for r in result["results"]
+        ],
+        summary=result["summary"],
     )
 
 

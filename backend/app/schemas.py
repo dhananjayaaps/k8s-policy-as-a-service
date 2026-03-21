@@ -216,6 +216,32 @@ class PolicyRenderResponse(BaseModel):
     error: Optional[str] = None
 
 
+class PolicyTestRequest(BaseModel):
+    """Request to test a Kyverno policy against a Kubernetes resource"""
+    policy_yaml: str = Field(..., description="Kyverno policy YAML")
+    resource_yaml: str = Field(..., description="Kubernetes resource YAML to test against")
+
+
+class PolicyTestRuleResult(BaseModel):
+    """Result of testing a single rule against a resource"""
+    rule_name: str
+    matched: bool
+    status: str  # "pass", "fail", "skip", "warn"
+    message: str
+    action_type: Optional[str] = None  # "validate", "mutate", "generate"
+
+
+class PolicyTestResponse(BaseModel):
+    """Response after testing a policy against a resource"""
+    success: bool
+    policy_valid: bool
+    resource_valid: bool
+    policy_errors: List[str] = []
+    resource_errors: List[str] = []
+    results: List[PolicyTestRuleResult] = []
+    summary: Dict[str, int] = {}  # {"pass": N, "fail": N, "skip": N, "warn": N}
+
+
 # ============ Policy Deployment Schemas ============
 
 class PolicyDeploymentResponse(BaseModel):

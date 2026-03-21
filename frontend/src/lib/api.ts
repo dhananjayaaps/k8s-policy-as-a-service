@@ -567,6 +567,33 @@ export async function renderPolicyTemplate(
   });
 }
 
+export async function testPolicyAgainstResource(
+  policyYaml: string,
+  resourceYaml: string
+): Promise<ApiResponse<{
+  success: boolean;
+  policy_valid: boolean;
+  resource_valid: boolean;
+  policy_errors: string[];
+  resource_errors: string[];
+  results: Array<{
+    rule_name: string;
+    matched: boolean;
+    status: 'pass' | 'fail' | 'skip' | 'warn';
+    message: string;
+    action_type: string | null;
+  }>;
+  summary: { pass: number; fail: number; skip: number; warn: number };
+}>> {
+  return fetchApi('/policies/test-resource', {
+    method: 'POST',
+    body: JSON.stringify({
+      policy_yaml: policyYaml,
+      resource_yaml: resourceYaml,
+    }),
+  });
+}
+
 export async function deployPolicy(request: {
   policy_id: number;
   cluster_id?: number;

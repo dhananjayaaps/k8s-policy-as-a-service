@@ -317,6 +317,389 @@ class ValidationService:
         
         return errors
 
+    def test_resource_against_policy(
+        self,
+        policy_yaml: str,
+        resource_yaml: str,
+    ) -> Dict[str, Any]:
+        """
+        Test a Kubernetes resource YAML against a Kyverno policy.
+
+        Returns a dict with per-rule results indicating pass/fail/skip.
+        """
+        result: Dict[str, Any] = {
+            "success": True,
+            "policy_valid": True,
+            "resource_valid": True,
+            "policy_errors": [],
+            "resource_errors": [],
+            "results": [],
+            "summary": {"pass": 0, "fail": 0, "skip": 0, "warn": 0},
+        }
+
+        # ---------- parse policy ----------
+        try:
+            policy = yaml.safe_load(policy_yaml)
+            if not isinstance(policy, dict):
+                result["policy_valid"] = False
+                result["policy_errors"].append("Policy YAML must be a mapping")
+                result["success"] = False
+                return result
+        except yaml.YAMLError as e:
+            result["policy_valid"] = False
+            result["policy_errors"].append(f"Invalid policy YAML: {e}")
+            result["success"] = False
+            return result
+
+        # quick structural check
+        pol_validation = self.validate_policy(policy_yaml)
+        if not pol_validation["valid"]:
+            result["policy_valid"] = False
+            result["policy_errors"] = pol_validation["errors"]
+            result["success"] = False
+            return result
+        result["policy_errors"] = pol_validation.get("warnings", [])
+
+        # ---------- parse resource ----------
+        try:
+            resource = yaml.safe_load(resource_yaml)
+            if not isinstance(resource, dict):
+                result["resource_valid"] = False
+                result["resource_errors"].append("Resource YAML must be a mapping")
+                result["success"] = False
+                return result
+        except yaml.YAMLError as e:
+            result["resource_valid"] = False
+            result["resource_errors"].append(f"Invalid resource YAML: {e}")
+            result["success"] = False
+            return result
+
+        # basic resource checks
+        res_kind = resource.get("kind")
+        if not res_kind:
+            result["resource_valid"] = False
+            result["resource_errors"].append("Resource must have a 'kind' field")
+            result["success"] = False
+            return result
+
+        res_api = resource.get("apiVersion", "")
+        res_ns = (resource.get("metadata") or {}).get("namespace", "default")
+        res_name = (resource.get("metadata") or {}).get("name", "")
+        res_labels = (resource.get("metadata") or {}).get("labels", {}) or {}
+
+        # ---------- iterate rules ----------
+        spec = policy.get("spec", {})
+        rules = spec.get("rules", [])
+        failure_action = spec.get("validationFailureAction", "Audit").lower()
+
+        for rule in rules:
+            rule_name = rule.get("name", "unnamed")
+            rule_result = self._test_rule(
+                rule, res_kind, res_api, res_ns, res_name, res_labels, resource, failure_action
+            )
+            result["results"].append(rule_result)
+            result["summary"][rule_result["status"]] = (
+                result["summary"].get(rule_result["status"], 0) + 1
+            )
+
+        return result
+
+    # ---- helpers for test_resource ----
+
+    def _test_rule(
+        self,
+        rule: Dict[str, Any],
+        res_kind: str,
+        res_api: str,
+        res_ns: str,
+        res_name: str,
+        res_labels: Dict[str, str],
+        resource: Dict[str, Any],
+        failure_action: str,
+    ) -> Dict[str, Any]:
+        """Test a single rule against a resource."""
+        rule_name = rule.get("name", "unnamed")
+        action_type = None
+        for act in ("validate", "mutate", "generate", "verifyImages"):
+            if act in rule:
+                action_type = act
+                break
+
+        # --- match check ---
+        match_block = rule.get("match", {})
+        matched = self._matches(match_block, res_kind, res_api, res_ns, res_name, res_labels)
+
+        # --- exclude check ---
+        exclude_block = rule.get("exclude")
+        if exclude_block and matched:
+            excluded = self._matches(exclude_block, res_kind, res_api, res_ns, res_name, res_labels)
+            if excluded:
+                return {
+                    "rule_name": rule_name,
+                    "matched": False,
+                    "status": "skip",
+                    "message": "Resource is excluded from this rule",
+                    "action_type": action_type,
+                }
+
+        if not matched:
+            return {
+                "rule_name": rule_name,
+                "matched": False,
+                "status": "skip",
+                "message": "Resource does not match this rule's criteria (kind, namespace, or labels)",
+                "action_type": action_type,
+            }
+
+        # --- evaluate action ---
+        if action_type == "validate":
+            return self._evaluate_validate(rule, resource, rule_name, failure_action)
+        elif action_type == "mutate":
+            return {
+                "rule_name": rule_name,
+                "matched": True,
+                "status": "warn",
+                "message": "This mutate rule would modify the resource (mutations are applied at admission time)",
+                "action_type": "mutate",
+            }
+        elif action_type == "generate":
+            return {
+                "rule_name": rule_name,
+                "matched": True,
+                "status": "warn",
+                "message": "This generate rule would create additional resources",
+                "action_type": "generate",
+            }
+        elif action_type == "verifyImages":
+            images = self._extract_images(resource)
+            if images:
+                return {
+                    "rule_name": rule_name,
+                    "matched": True,
+                    "status": "warn",
+                    "message": f"Image verification would apply to: {', '.join(images)}",
+                    "action_type": "verifyImages",
+                }
+            return {
+                "rule_name": rule_name,
+                "matched": True,
+                "status": "pass",
+                "message": "No container images found to verify",
+                "action_type": "verifyImages",
+            }
+        else:
+            return {
+                "rule_name": rule_name,
+                "matched": True,
+                "status": "skip",
+                "message": "Rule has no recognized action type",
+                "action_type": None,
+            }
+
+    def _matches(
+        self,
+        match_block: Dict[str, Any],
+        res_kind: str,
+        res_api: str,
+        res_ns: str,
+        res_name: str,
+        res_labels: Dict[str, str],
+    ) -> bool:
+        """Check if a resource matches a match/exclude block."""
+        if not match_block:
+            return True
+
+        # handle 'any'/'all' style
+        any_rules = match_block.get("any")
+        all_rules = match_block.get("all")
+        if any_rules:
+            return any(
+                self._matches_single(r, res_kind, res_api, res_ns, res_name, res_labels)
+                for r in any_rules
+            )
+        if all_rules:
+            return all(
+                self._matches_single(r, res_kind, res_api, res_ns, res_name, res_labels)
+                for r in all_rules
+            )
+
+        # direct resources block
+        return self._matches_single(match_block, res_kind, res_api, res_ns, res_name, res_labels)
+
+    def _matches_single(
+        self,
+        block: Dict[str, Any],
+        res_kind: str,
+        res_api: str,
+        res_ns: str,
+        res_name: str,
+        res_labels: Dict[str, str],
+    ) -> bool:
+        """Check a single match condition."""
+        resources = block.get("resources", {})
+        if not resources:
+            return True
+
+        # kinds
+        kinds = resources.get("kinds", [])
+        if kinds:
+            kind_matched = False
+            for k in kinds:
+                if "/" in k:
+                    # group/kind  e.g. apps/v1/Deployment
+                    parts = k.rsplit("/", 1)
+                    if parts[-1] == res_kind:
+                        kind_matched = True
+                        break
+                elif k == res_kind:
+                    kind_matched = True
+                    break
+                elif k == "*":
+                    kind_matched = True
+                    break
+            if not kind_matched:
+                return False
+
+        # namespaces
+        namespaces = resources.get("namespaces", [])
+        if namespaces and res_ns not in namespaces:
+            return False
+
+        # names
+        names = resources.get("names", [])
+        if names and res_name not in names and "*" not in names:
+            return False
+
+        # selector (matchLabels)
+        selector = resources.get("selector", {})
+        match_labels = selector.get("matchLabels", {})
+        for lk, lv in match_labels.items():
+            if res_labels.get(lk) != lv:
+                return False
+
+        return True
+
+    def _evaluate_validate(
+        self,
+        rule: Dict[str, Any],
+        resource: Dict[str, Any],
+        rule_name: str,
+        failure_action: str,
+    ) -> Dict[str, Any]:
+        """Evaluate a validate rule against a resource."""
+        validate = rule.get("validate", {})
+        message = validate.get("message", "Validation failed")
+
+        # deny rules
+        if "deny" in validate:
+            # Simple deny – always fails when matched
+            deny = validate["deny"]
+            conditions = deny.get("conditions") if isinstance(deny, dict) else None
+            if conditions:
+                return {
+                    "rule_name": rule_name,
+                    "matched": True,
+                    "status": "warn",
+                    "message": f"Deny rule with conditions: {message}",
+                    "action_type": "validate",
+                }
+            return {
+                "rule_name": rule_name,
+                "matched": True,
+                "status": "fail",
+                "message": message,
+                "action_type": "validate",
+            }
+
+        # pattern / anyPattern
+        pattern = validate.get("pattern")
+        any_pattern = validate.get("anyPattern")
+
+        if pattern:
+            ok = self._match_pattern(pattern, resource)
+            status = "pass" if ok else ("fail" if failure_action == "enforce" else "warn")
+            return {
+                "rule_name": rule_name,
+                "matched": True,
+                "status": status,
+                "message": message if not ok else "Resource matches the required pattern",
+                "action_type": "validate",
+            }
+
+        if any_pattern:
+            ok = any(self._match_pattern(p, resource) for p in any_pattern)
+            status = "pass" if ok else ("fail" if failure_action == "enforce" else "warn")
+            return {
+                "rule_name": rule_name,
+                "matched": True,
+                "status": status,
+                "message": message if not ok else "Resource matches one of the allowed patterns",
+                "action_type": "validate",
+            }
+
+        # CEL / other advanced – can't fully evaluate
+        return {
+            "rule_name": rule_name,
+            "matched": True,
+            "status": "warn",
+            "message": f"Rule uses advanced validation that requires a live cluster to evaluate: {message}",
+            "action_type": "validate",
+        }
+
+    def _match_pattern(self, pattern: Any, value: Any, path: str = "") -> bool:
+        """Recursively match a Kyverno pattern against a value."""
+        if isinstance(pattern, dict):
+            if not isinstance(value, dict):
+                return False
+            for pk, pv in pattern.items():
+                # skip Kyverno operators for now except basic matching
+                if pk.startswith("(") or pk.startswith("X("):
+                    continue
+                child = value.get(pk)
+                if child is None:
+                    # pattern key missing in resource
+                    return False
+                if not self._match_pattern(pv, child, f"{path}.{pk}"):
+                    return False
+            return True
+        elif isinstance(pattern, list):
+            if not isinstance(value, list):
+                return False
+            # each pattern item must match at least one value item
+            for pi in pattern:
+                found = any(self._match_pattern(pi, vi) for vi in value)
+                if not found:
+                    return False
+            return True
+        elif isinstance(pattern, str):
+            s_val = str(value) if value is not None else ""
+            # handle wildcard / negation patterns
+            if pattern == "*":
+                return True
+            if pattern.startswith("!"):
+                return s_val != pattern[1:]
+            if pattern.startswith(">=") or pattern.startswith("<=") or pattern.startswith(">") or pattern.startswith("<"):
+                return True  # numeric comparisons need more context
+            return s_val == pattern
+        else:
+            return value == pattern
+
+    def _extract_images(self, resource: Dict[str, Any]) -> List[str]:
+        """Extract container image references from a K8s resource."""
+        images: List[str] = []
+        spec = resource.get("spec", {})
+        # Pod spec can be nested (Deployment -> spec.template.spec)
+        pod_spec = spec
+        if "template" in spec:
+            pod_spec = spec["template"].get("spec", {})
+
+        for container_key in ("containers", "initContainers", "ephemeralContainers"):
+            for c in pod_spec.get(container_key, []):
+                img = c.get("image")
+                if img:
+                    images.append(img)
+        return images
+
 
 # Singleton instance
 _validation_service: Optional[ValidationService] = None
