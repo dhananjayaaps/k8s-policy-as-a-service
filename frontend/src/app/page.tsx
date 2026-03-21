@@ -8,10 +8,11 @@ import Marketplace from '@/src/views/Marketplace';
 import Sandbox from '@/src/views/Sandbox';
 import AuditLogs from '@/src/views/AuditLogs';
 import ManageClusters from '@/src/views/ManageClusters';
+import PolicyManager from '@/src/views/PolicyManager';
 import Profile from '@/src/views/Profile';
 import ProtectedRoute from '@/src/components/ProtectedRoute';
 
-type ViewType = 'dashboard' | 'marketplace' | 'sandbox' | 'audit' | 'clusters' | 'profile';
+type ViewType = 'dashboard' | 'marketplace' | 'sandbox' | 'audit' | 'clusters' | 'policy-manager' | 'profile';
 
 export default function Home() {
   const [activeView, setActiveView] = useState<ViewType>('dashboard');
@@ -28,6 +29,8 @@ export default function Home() {
         return <AuditLogs />;
       case 'clusters':
         return <ManageClusters />;
+      case 'policy-manager':
+        return <PolicyManager />;
       case 'profile':
         return <Profile />;
       default:

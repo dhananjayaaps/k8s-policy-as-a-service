@@ -1,4 +1,5 @@
-import { LayoutDashboard, ShoppingBag, FileCode, ScrollText, Server, UserCircle } from 'lucide-react';
+import { LayoutDashboard, ShoppingBag, FileCode, ScrollText, Server, UserCircle, Shield } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 
 type SidebarProps = {
   activeView: string;
@@ -6,12 +7,17 @@ type SidebarProps = {
 };
 
 export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'marketplace', label: 'Marketplace', icon: ShoppingBag },
     { id: 'sandbox', label: 'Sandbox', icon: FileCode },
     { id: 'audit', label: 'Audit Logs', icon: ScrollText },
     { id: 'clusters', label: 'Manage Clusters', icon: Server },
+    // ...(isAdmin ? [{ id: 'policy-manager', label: 'Policy Manager', icon: Shield }] : []),
+    { id: 'policy-manager', label: 'Policy Manager', icon: Shield },
     { id: 'profile', label: 'User Profile', icon: UserCircle },
   ];
 
@@ -54,11 +60,15 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
       <div className="p-4 border-t border-slate-700">
         <div className="flex items-center gap-3 px-4 py-3">
           <div className="w-8 h-8 bg-slate-700 rounded-full flex items-center justify-center">
-            <span className="text-sm font-medium">A</span>
+            <span className="text-sm font-medium">
+              {(user?.full_name || user?.username || 'U').charAt(0).toUpperCase()}
+            </span>
           </div>
-          <div>
-            <div className="text-sm font-medium">Admin</div>
-            <div className="text-xs text-slate-400">admin@sme.com</div>
+          <div className="overflow-hidden">
+            <div className="text-sm font-medium truncate">
+              {user?.full_name || user?.username || 'User'}
+            </div>
+            <div className="text-xs text-slate-400 capitalize">{user?.role || 'user'}</div>
           </div>
         </div>
       </div>

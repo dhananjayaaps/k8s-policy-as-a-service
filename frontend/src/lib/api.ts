@@ -607,6 +607,47 @@ export async function deployPolicyMulti(request: {
   });
 }
 
+export async function createPolicy(data: {
+  name: string;
+  title?: string;
+  category?: string;
+  description?: string;
+  severity?: string;
+  yaml_template: string;
+  parameters?: Record<string, any> | null;
+  is_active?: boolean;
+}): Promise<ApiResponse<Policy>> {
+  return fetchApi<Policy>('/policies/', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updatePolicyById(
+  id: number,
+  data: {
+    name?: string;
+    title?: string;
+    category?: string;
+    description?: string;
+    severity?: string;
+    yaml_template?: string;
+    parameters?: Record<string, any> | null;
+    is_active?: boolean;
+  }
+): Promise<ApiResponse<Policy>> {
+  return fetchApi<Policy>(`/policies/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deletePolicyById(id: number): Promise<ApiResponse<{ message: string }>> {
+  return fetchApi<{ message: string }>(`/policies/${id}`, {
+    method: 'DELETE',
+  });
+}
+
 // ============== Audit Logs API ==============
 
 export async function getAuditLogs(options?: {

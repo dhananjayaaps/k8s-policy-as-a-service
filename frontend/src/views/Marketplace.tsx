@@ -68,7 +68,7 @@ export default function Marketplace() {
     
     // Initialize all as loading
     policies.forEach(policy => {
-      statuses[policy.id] = { deployed: false, loading: true };
+      statuses[String(policy.id)] = { deployed: false, loading: true };
     });
     setDeploymentStatus(statuses);
 
@@ -76,9 +76,9 @@ export default function Marketplace() {
     await Promise.all(
       policies.map(async (policy) => {
         try {
-          const response = await checkDeploymentStatus(policy.id, String(selectedClusterId));
+          const response = await checkDeploymentStatus(String(policy.id), String(selectedClusterId));
           if (response.data) {
-            statuses[policy.id] = {
+            statuses[String(policy.id)] = {
               deployed: response.data.deployed,
               loading: false,
               canQuickDeploy: response.data.can_quick_deploy,
@@ -88,7 +88,7 @@ export default function Marketplace() {
             };
           }
         } catch (error) {
-          statuses[policy.id] = { deployed: false, loading: false };
+          statuses[String(policy.id)] = { deployed: false, loading: false };
         }
       })
     );
@@ -105,13 +105,13 @@ export default function Marketplace() {
     // Set loading state
     setDeploymentStatus(prev => ({
       ...prev,
-      [policy.id]: { ...prev[policy.id], loading: true }
+      [String(policy.id)]: { ...prev[String(policy.id)], loading: true }
     }));
 
     try {
       if (currentlyDeployed) {
         // Undeploy from cluster
-        const response = await quickUndeployPolicy(policy.id, String(selectedClusterId));
+        const response = await quickUndeployPolicy(String(policy.id), String(selectedClusterId));
         if (response.data?.success) {
           // Reload all statuses to get updated previous config info
           await loadDeploymentStatuses();
@@ -120,7 +120,7 @@ export default function Marketplace() {
         }
       } else {
         // Try to deploy to cluster
-        const response = await quickDeployPolicy(policy.id, String(selectedClusterId));
+        const response = await quickDeployPolicy(String(policy.id), String(selectedClusterId));
         
         // Check if configuration is required (backend returns 400 with specific message)
         if (!response.data && response.status === 400 && 
@@ -128,7 +128,7 @@ export default function Marketplace() {
           // Configuration needed - open editor instead
           setDeploymentStatus(prev => ({
             ...prev,
-            [policy.id]: { deployed: false, loading: false }
+            [String(policy.id)]: { deployed: false, loading: false }
           }));
           setSelectedPolicy(policy);
           setIsEditorOpen(true);
@@ -147,7 +147,7 @@ export default function Marketplace() {
       alert(errorMessage);
       setDeploymentStatus(prev => ({
         ...prev,
-        [policy.id]: { deployed: currentlyDeployed, loading: false }
+        [String(policy.id)]: { deployed: currentlyDeployed, loading: false }
       }));
     }
   }
@@ -160,7 +160,7 @@ export default function Marketplace() {
     
     // Fetch current deployment parameters if exists
     try {
-      const statusResponse = await checkDeploymentStatus(policy.id, String(selectedClusterId));
+      const statusResponse = await checkDeploymentStatus(String(policy.id), String(selectedClusterId));
       if (statusResponse.data?.deployment_info?.parameters) {
         // Pre-fill with current deployed parameters
         setCurrentDeploymentParams(statusResponse.data.deployment_info.parameters);
@@ -274,7 +274,7 @@ export default function Marketplace() {
         )}
         {filteredPolicies.map((policy) => {
           const Icon = categoryIcons[policy.category] || Shield;
-          const status = deploymentStatus[policy.id];
+          const status = deploymentStatus[String(policy.id)];
           const isDeployed = status?.deployed || false;
           const isLoading = status?.loading || false;
           const canToggle = status?.canQuickDeploy !== false; // Can toggle if true or undefined (loading)

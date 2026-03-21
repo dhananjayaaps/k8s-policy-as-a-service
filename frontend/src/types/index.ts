@@ -123,14 +123,17 @@ export type NamespaceListResponse = {
 };
 
 export type Policy = {
-  id: string;
+  id: string | number;
+  name: string;           // internal identifier (e.g. "disallow-latest-tag")
   category: string;
   title: string;
   description: string;
   yaml_template: string | null;
   is_active: boolean;
   severity: string;
+  parameters?: Record<string, any> | null;
   created_at: string;
+  updated_at?: string;
 };
 
 export type AuditLog = {
