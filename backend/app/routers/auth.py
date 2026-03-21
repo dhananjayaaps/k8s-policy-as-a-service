@@ -8,11 +8,15 @@ from typing import List
 
 from app.db import get_db
 from app.models import User
-from app.schemas import UserCreate, UserLogin, UserResponse, Token
+from app.schemas import (
+    UserCreate, UserLogin, UserResponse, Token,
+    UserUpdateProfile, UserChangePassword, AdminUpdateUser
+)
 from app.services.auth import (
     authenticate_user,
     create_access_token,
     get_password_hash,
+    verify_password,
     get_current_user,
     get_current_active_admin
 )
@@ -132,6 +136,8 @@ async def add_user(
         username=user_create.username,
         hashed_password=get_password_hash(user_create.password),
         role=user_create.role,
+        email=user_create.email,
+        full_name=user_create.full_name,
         is_active=True
     )
     
@@ -208,3 +214,108 @@ async def delete_user(
     
     db.delete(user)
     db.commit()
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_profile(
+    profile_update: UserUpdateProfile,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Update current user's profile (email, full_name).
+    """
+    update_data = profile_update.model_dump(exclude_unset=True)
+    
+    # If email is being updated, check uniqueness
+    if "email" in update_data and update_data["email"]:
+        existing = db.query(User).filter(
+            User.email == update_data["email"],
+            User.id != current_user.id
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already in use by another account"
+            )
+    
+    for key, value in update_data.items():
+        setattr(current_user, key, value)
+    
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+
+@router.post("/change-password")
+async def change_password(
+    password_data: UserChangePassword,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Change current user's password. Requires current password verification.
+    """
+    if not verify_password(password_data.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect"
+        )
+    
+    current_user.hashed_password = get_password_hash(password_data.new_password)
+    db.commit()
+    
+    return {"success": True, "message": "Password changed successfully"}
+
+
+@router.patch("/users/{user_id}", response_model=UserResponse)
+async def admin_update_user(
+    user_id: int,
+    user_update: AdminUpdateUser,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_active_admin)
+):
+    """
+    Admin-only: Update a user's role, active status, email, or full_name.
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    update_data = user_update.model_dump(exclude_unset=True)
+    
+    # Prevent admin from demoting themselves
+    if user.id == current_admin.id and "role" in update_data and update_data["role"] != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot change your own admin role"
+        )
+    
+    # Prevent admin from deactivating themselves
+    if user.id == current_admin.id and "is_active" in update_data and not update_data["is_active"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot deactivate your own account"
+        )
+    
+    # If email is being updated, check uniqueness
+    if "email" in update_data and update_data["email"]:
+        existing = db.query(User).filter(
+            User.email == update_data["email"],
+            User.id != user_id
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already in use by another account"
+            )
+    
+    for key, value in update_data.items():
+        setattr(user, key, value)
+    
+    db.commit()
+    db.refresh(user)
+    return user

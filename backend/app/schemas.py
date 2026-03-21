@@ -12,6 +12,8 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str = Field(..., min_length=6)
     role: str = Field(default="user", pattern="^(admin|user)$")
+    email: Optional[str] = Field(None, max_length=255)
+    full_name: Optional[str] = Field(None, max_length=255)
 
 
 class UserLogin(BaseModel):
@@ -21,6 +23,8 @@ class UserLogin(BaseModel):
 
 class UserResponse(UserBase):
     id: int
+    email: Optional[str] = None
+    full_name: Optional[str] = None
     role: str
     is_active: bool
     created_at: datetime
@@ -28,6 +32,26 @@ class UserResponse(UserBase):
     
     class Config:
         from_attributes = True
+
+
+class UserUpdateProfile(BaseModel):
+    """Schema for updating own profile"""
+    email: Optional[str] = Field(None, max_length=255)
+    full_name: Optional[str] = Field(None, max_length=255)
+
+
+class UserChangePassword(BaseModel):
+    """Schema for changing own password"""
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=6)
+
+
+class AdminUpdateUser(BaseModel):
+    """Schema for admin updating a user"""
+    role: Optional[str] = Field(None, pattern="^(admin|user)$")
+    is_active: Optional[bool] = None
+    email: Optional[str] = Field(None, max_length=255)
+    full_name: Optional[str] = Field(None, max_length=255)
 
 
 class Token(BaseModel):

@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime
+import asyncio
 import logging
 import yaml
 
@@ -40,6 +41,22 @@ router = APIRouter(
     dependencies=[Depends(get_current_user)]
 )
 logger = logging.getLogger(__name__)
+
+_K8S_TIMEOUT = 20.0
+
+
+async def _run_k8s_in_thread(func, timeout: float = _K8S_TIMEOUT):
+    """Run a sync K8s call in a thread so the async event loop isn't blocked."""
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(func), timeout=timeout)
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"Kubernetes cluster request timed out after {int(timeout)} seconds. "
+                "The cluster may be unreachable."
+            ),
+        )
 
 
 # ============ Policy CRUD ============
@@ -328,52 +345,35 @@ async def deploy_policy(
         )
     
     # Connect to cluster and deploy
-    connector = get_k8s_connector()
-    
+    cluster_config_deploy = {
+        "server": cluster.server_url,
+        "insecure-skip-tls-verify": not cluster.verify_ssl,
+    }
+    if cluster.verify_ssl and cluster.ca_cert_data:
+        cluster_config_deploy["certificate-authority-data"] = cluster.ca_cert_data
+
+    kubeconfig_content_deploy = yaml.dump({
+        "apiVersion": "v1",
+        "kind": "Config",
+        "clusters": [{"name": "cluster", "cluster": cluster_config_deploy}],
+        "users": [{"name": "user", "user": {"token": sa_token.token}}],
+        "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
+        "current-context": "context",
+    })
+
+    def _sync_deploy():
+        connector = get_k8s_connector()
+        connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content_deploy)
+        return connector.apply_yaml(yaml_content, namespace=request.namespace)
+
     try:
-        # Create kubeconfig with token
-        import yaml
-        cluster_config = {
-            "server": cluster.server_url,
-            "insecure-skip-tls-verify": not cluster.verify_ssl
-        }
-        if cluster.verify_ssl and cluster.ca_cert_data:
-            cluster_config["certificate-authority-data"] = cluster.ca_cert_data
-        
-        kubeconfig = {
-            "apiVersion": "v1",
-            "kind": "Config",
-            "clusters": [{
-                "name": "cluster",
-                "cluster": cluster_config
-            }],
-            "users": [{
-                "name": "user",
-                "user": {
-                    "token": sa_token.token
-                }
-            }],
-            "contexts": [{
-                "name": "context",
-                "context": {
-                    "cluster": "cluster",
-                    "user": "user"
-                }
-            }],
-            "current-context": "context"
-        }
-        
-        kubeconfig_content = yaml.dump(kubeconfig)
-        connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
-        
-        result = connector.apply_yaml(yaml_content, namespace=request.namespace)
-        
+        await _run_k8s_in_thread(_sync_deploy)
+
         # Update deployment status
         deployment.status = "deployed"
         deployment.deployed_at = datetime.utcnow()
         db.commit()
-        
-        # Add audit log
+
         audit = AuditLog(
             action="policy_deploy",
             resource_type="policy_deployment",
@@ -381,41 +381,41 @@ async def deploy_policy(
             details={
                 "policy_name": policy.name,
                 "cluster_name": cluster.name,
-                "namespace": request.namespace
+                "namespace": request.namespace,
             },
-            status="success"
+            status="success",
         )
         db.add(audit)
         db.commit()
-        
+
         return PolicyDeployResponse(
             success=True,
             message=f"Policy '{policy.name}' deployed to cluster '{cluster.name}'",
             deployment_id=deployment.id,
-            deployed_yaml=yaml_content
+            deployed_yaml=yaml_content,
         )
-        
+
+    except HTTPException:
+        deployment.status = "failed"
+        deployment.error_message = "Kubernetes request timed out or cluster unreachable"
+        db.commit()
+        raise
     except Exception as e:
-        # Update deployment status
         deployment.status = "failed"
         deployment.error_message = str(e)
         db.commit()
-        
-        # Add audit log
+
         audit = AuditLog(
             action="policy_deploy",
             resource_type="policy_deployment",
             resource_id=deployment.id,
             status="failure",
-            error_message=str(e)
+            error_message=str(e),
         )
         db.add(audit)
         db.commit()
-        
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to deploy policy: {str(e)}"
-        )
+
+        raise HTTPException(status_code=500, detail=f"Failed to deploy policy: {str(e)}")
 
 
 @router.post("/deploy-multi", response_model=PolicyMultiDeployResponse)

@@ -1,4 +1,4 @@
-import { LayoutDashboard, ShoppingBag, FileCode, ScrollText, Settings } from 'lucide-react';
+import { LayoutDashboard, ShoppingBag, FileCode, ScrollText, Server, UserCircle } from 'lucide-react';
 
 type SidebarProps = {
   activeView: string;
@@ -11,7 +11,8 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
     { id: 'marketplace', label: 'Marketplace', icon: ShoppingBag },
     { id: 'sandbox', label: 'Sandbox', icon: FileCode },
     { id: 'audit', label: 'Audit Logs', icon: ScrollText },
-    { id: 'settings', label: 'Settings', icon: Settings },
+    { id: 'clusters', label: 'Manage Clusters', icon: Server },
+    { id: 'profile', label: 'User Profile', icon: UserCircle },
   ];
 
   return (

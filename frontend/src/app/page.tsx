@@ -7,10 +7,11 @@ import Dashboard from '@/src/views/Dashboard';
 import Marketplace from '@/src/views/Marketplace';
 import Sandbox from '@/src/views/Sandbox';
 import AuditLogs from '@/src/views/AuditLogs';
-import Settings from '@/src/views/Settings';
+import ManageClusters from '@/src/views/ManageClusters';
+import Profile from '@/src/views/Profile';
 import ProtectedRoute from '@/src/components/ProtectedRoute';
 
-type ViewType = 'dashboard' | 'marketplace' | 'sandbox' | 'audit' | 'settings';
+type ViewType = 'dashboard' | 'marketplace' | 'sandbox' | 'audit' | 'clusters' | 'profile';
 
 export default function Home() {
   const [activeView, setActiveView] = useState<ViewType>('dashboard');
@@ -25,8 +26,10 @@ export default function Home() {
         return <Sandbox />;
       case 'audit':
         return <AuditLogs />;
-      case 'settings':
-        return <Settings />;
+      case 'clusters':
+        return <ManageClusters />;
+      case 'profile':
+        return <Profile />;
       default:
         return <Dashboard />;
     }

@@ -4,6 +4,8 @@
 export type User = {
   id: number;
   username: string;
+  email: string | null;
+  full_name: string | null;
   role: 'admin' | 'user';
   is_active: boolean;
   created_at: string;
@@ -19,6 +21,8 @@ export type SignupRequest = {
   username: string;
   password: string;
   role?: 'admin' | 'user';
+  email?: string;
+  full_name?: string;
 };
 
 export type AuthResponse = {

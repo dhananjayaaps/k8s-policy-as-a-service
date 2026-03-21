@@ -71,8 +71,9 @@ class K8sConnector:
             config.load_kube_config(config_file=temp_path, context=context)
             
             # Set API timeout for faster responses
+            # Tuple = (connect_timeout, read_timeout) for urllib3
             configuration = client.Configuration.get_default_copy()
-            configuration.timeout = 10  # 10 second timeout per API call
+            configuration.timeout = (5.0, 15.0)  # 5s connect, 15s read
             
             self._api_client = client.ApiClient(configuration)
             self._current_kubeconfig = temp_path

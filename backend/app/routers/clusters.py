@@ -7,6 +7,7 @@ API endpoints for managing Kubernetes cluster connections.
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from typing import List, Optional
+import asyncio
 import subprocess
 import yaml
 import re
@@ -64,6 +65,26 @@ router = APIRouter(
     tags=["clusters"],
     dependencies=[Depends(get_current_user)]
 )
+
+# Timeout for K8s API operations (seconds). Should be > k8s_connector read timeout (15s).
+_K8S_TIMEOUT = 20.0
+
+
+async def _run_k8s_in_thread(func, timeout: float = _K8S_TIMEOUT):
+    """
+    Run a synchronous Kubernetes operation in a thread-pool worker so the
+    async event loop is never blocked.  Raises HTTP 504 on timeout.
+    """
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(func), timeout=timeout)
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"Kubernetes cluster request timed out after {int(timeout)} seconds. "
+                "The cluster may be unreachable or the API server is not responding."
+            ),
+        )
 
 
 # ============ Helper Functions ============
@@ -302,56 +323,40 @@ async def list_namespaces(cluster_id: int, db: Session = Depends(get_db)):
         )
     
     # Create temporary K8s session
-    session_id, k8s_connector = create_k8s_session()
-    
+    # Build kubeconfig from saved credentials (fast, no network I/O)
+    # Note: When insecure-skip-tls-verify is true, don't include CA cert (Helm requirement)
+    cluster_config = {
+        "server": cluster.server_url,
+        "insecure-skip-tls-verify": not cluster.verify_ssl
+    }
+    if cluster.verify_ssl and cluster.ca_cert_data:
+        cluster_config["certificate-authority-data"] = cluster.ca_cert_data
+
+    kubeconfig_content = yaml.dump({
+        "apiVersion": "v1",
+        "kind": "Config",
+        "clusters": [{"name": "cluster", "cluster": cluster_config}],
+        "users": [{"name": "user", "user": {"token": sa_token.token}}],
+        "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
+        "current-context": "context",
+    })
+
+    # Run blocking K8s call in a thread-pool worker so the event loop stays responsive
+    def _sync():
+        session_id, k8s = create_k8s_session()
+        try:
+            k8s.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
+            return k8s.list_namespaces()
+        finally:
+            close_k8s_session(session_id)
+
     try:
-        # Create kubeconfig with token
-        # Note: When insecure-skip-tls-verify is true, don't include CA cert (Helm requirement)
-        cluster_config = {
-            "server": cluster.server_url,
-            "insecure-skip-tls-verify": not cluster.verify_ssl
-        }
-        if cluster.verify_ssl and cluster.ca_cert_data:
-            cluster_config["certificate-authority-data"] = cluster.ca_cert_data
-        
-        kubeconfig = {
-            "apiVersion": "v1",
-            "kind": "Config",
-            "clusters": [{
-                "name": "cluster",
-                "cluster": cluster_config
-            }],
-            "users": [{
-                "name": "user",
-                "user": {
-                    "token": sa_token.token
-                }
-            }],
-            "contexts": [{
-                "name": "context",
-                "context": {
-                    "cluster": "cluster",
-                    "user": "user"
-                }
-            }],
-            "current-context": "context"
-        }
-        
-        kubeconfig_content = yaml.dump(kubeconfig)
-        k8s_connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
-        
-        namespaces = k8s_connector.list_namespaces()
-        return NamespaceListResponse(
-            namespaces=namespaces,
-            count=len(namespaces)
-        )
+        namespaces = await _run_k8s_in_thread(_sync)
+        return NamespaceListResponse(namespaces=namespaces, count=len(namespaces))
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to list namespaces: {str(e)}"
-        )
-    finally:
-        close_k8s_session(session_id)
+        raise HTTPException(status_code=500, detail=f"Failed to list namespaces: {str(e)}")
 
 
 @router.get("/{cluster_id}/info")
@@ -376,52 +381,36 @@ async def get_cluster_info(cluster_id: int, db: Session = Depends(get_db)):
             detail="Cluster missing credentials. Please run cluster setup first."
         )
     
-    # Create temporary K8s session
-    session_id, k8s_connector = create_k8s_session()
-    
+    cluster_config = {
+        "server": cluster.server_url,
+        "insecure-skip-tls-verify": not cluster.verify_ssl
+    }
+    if cluster.verify_ssl and cluster.ca_cert_data:
+        cluster_config["certificate-authority-data"] = cluster.ca_cert_data
+
+    kubeconfig_content = yaml.dump({
+        "apiVersion": "v1",
+        "kind": "Config",
+        "clusters": [{"name": "cluster", "cluster": cluster_config}],
+        "users": [{"name": "user", "user": {"token": sa_token.token}}],
+        "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
+        "current-context": "context",
+    })
+
+    def _sync():
+        session_id, k8s = create_k8s_session()
+        try:
+            k8s.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
+            return k8s.get_cluster_info()
+        finally:
+            close_k8s_session(session_id)
+
     try:
-        cluster_config = {
-            "server": cluster.server_url,
-            "insecure-skip-tls-verify": not cluster.verify_ssl
-        }
-        if cluster.verify_ssl and cluster.ca_cert_data:
-            cluster_config["certificate-authority-data"] = cluster.ca_cert_data
-        
-        kubeconfig = {
-            "apiVersion": "v1",
-            "kind": "Config",
-            "clusters": [{
-                "name": "cluster",
-                "cluster": cluster_config
-            }],
-            "users": [{
-                "name": "user",
-                "user": {
-                    "token": sa_token.token
-                }
-            }],
-            "contexts": [{
-                "name": "context",
-                "context": {
-                    "cluster": "cluster",
-                    "user": "user"
-                }
-            }],
-            "current-context": "context"
-        }
-        
-        kubeconfig_content = yaml.dump(kubeconfig)
-        k8s_connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
-        
-        info = k8s_connector.get_cluster_info()
-        return info
+        return await _run_k8s_in_thread(_sync)
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get cluster info: {str(e)}"
-        )
-    finally:
-        close_k8s_session(session_id)
+        raise HTTPException(status_code=500, detail=f"Failed to get cluster info: {str(e)}")
 
 
 @router.get("/{cluster_id}/kyverno-status")
@@ -447,57 +436,42 @@ async def check_kyverno_status(cluster_id: int, db: Session = Depends(get_db)):
             detail="Cluster missing credentials. Please run cluster setup first."
         )
     
-    # Create temporary K8s session
-    session_id, k8s_connector = create_k8s_session()
-    
+    cluster_config = {
+        "server": cluster.server_url,
+        "insecure-skip-tls-verify": not cluster.verify_ssl
+    }
+    if cluster.verify_ssl and cluster.ca_cert_data:
+        cluster_config["certificate-authority-data"] = cluster.ca_cert_data
+
+    kubeconfig_content = yaml.dump({
+        "apiVersion": "v1",
+        "kind": "Config",
+        "clusters": [{"name": "cluster", "cluster": cluster_config}],
+        "users": [{"name": "user", "user": {"token": sa_token.token}}],
+        "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
+        "current-context": "context",
+    })
+
+    def _sync():
+        session_id, k8s = create_k8s_session()
+        try:
+            k8s.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
+            is_installed, version = k8s.check_kyverno_installed()
+            return {
+                "installed": is_installed,
+                "version": version,
+                "message": f"Kyverno {'is installed' if is_installed else 'is not installed'}"
+                           + (f" (version {version})" if version else ""),
+            }
+        finally:
+            close_k8s_session(session_id)
+
     try:
-        cluster_config = {
-            "server": cluster.server_url,
-            "insecure-skip-tls-verify": not cluster.verify_ssl
-        }
-        if cluster.verify_ssl and cluster.ca_cert_data:
-            cluster_config["certificate-authority-data"] = cluster.ca_cert_data
-        
-        kubeconfig = {
-            "apiVersion": "v1",
-            "kind": "Config",
-            "clusters": [{
-                "name": "cluster",
-                "cluster": cluster_config
-            }],
-            "users": [{
-                "name": "user",
-                "user": {
-                    "token": sa_token.token
-                }
-            }],
-            "contexts": [{
-                "name": "context",
-                "context": {
-                    "cluster": "cluster",
-                    "user": "user"
-                }
-            }],
-            "current-context": "context"
-        }
-        
-        kubeconfig_content = yaml.dump(kubeconfig)
-        k8s_connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
-        
-        is_installed, version = k8s_connector.check_kyverno_installed()
-        return {
-            "installed": is_installed,
-            "version": version,
-            "message": f"Kyverno {'is installed' if is_installed else 'is not installed'}"
-                       + (f" (version {version})" if version else "")
-        }
+        return await _run_k8s_in_thread(_sync)
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to check Kyverno status: {str(e)}"
-        )
-    finally:
-        close_k8s_session(session_id)
+        raise HTTPException(status_code=500, detail=f"Failed to check Kyverno status: {str(e)}")
 
 
 @router.get("/{cluster_id}/kyverno/status", response_model=KyvernoStatusResponse)
@@ -528,52 +502,36 @@ async def get_kyverno_comprehensive_status(cluster_id: int, db: Session = Depend
             detail="Cluster missing credentials. Please run cluster setup first."
         )
     
-    # Create temporary K8s session
-    session_id, k8s_connector = create_k8s_session()
-    
+    cluster_config = {
+        "server": cluster.server_url,
+        "insecure-skip-tls-verify": not cluster.verify_ssl
+    }
+    if cluster.verify_ssl and cluster.ca_cert_data:
+        cluster_config["certificate-authority-data"] = cluster.ca_cert_data
+
+    kubeconfig_content = yaml.dump({
+        "apiVersion": "v1",
+        "kind": "Config",
+        "clusters": [{"name": "cluster", "cluster": cluster_config}],
+        "users": [{"name": "user", "user": {"token": sa_token.token}}],
+        "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
+        "current-context": "context",
+    })
+
+    def _sync():
+        session_id, k8s = create_k8s_session()
+        try:
+            k8s.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
+            return k8s.check_kyverno_comprehensive()
+        finally:
+            close_k8s_session(session_id)
+
     try:
-        cluster_config = {
-            "server": cluster.server_url,
-            "insecure-skip-tls-verify": not cluster.verify_ssl
-        }
-        if cluster.verify_ssl and cluster.ca_cert_data:
-            cluster_config["certificate-authority-data"] = cluster.ca_cert_data
-        
-        kubeconfig = {
-            "apiVersion": "v1",
-            "kind": "Config",
-            "clusters": [{
-                "name": "cluster",
-                "cluster": cluster_config
-            }],
-            "users": [{
-                "name": "user",
-                "user": {
-                    "token": sa_token.token
-                }
-            }],
-            "contexts": [{
-                "name": "context",
-                "context": {
-                    "cluster": "cluster",
-                    "user": "user"
-                }
-            }],
-            "current-context": "context"
-        }
-        
-        kubeconfig_content = yaml.dump(kubeconfig)
-        k8s_connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
-        
-        status = k8s_connector.check_kyverno_comprehensive()
-        return status
+        return await _run_k8s_in_thread(_sync)
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to check Kyverno status: {str(e)}"
-        )
-    finally:
-        close_k8s_session(session_id)
+        raise HTTPException(status_code=500, detail=f"Failed to check Kyverno status: {str(e)}")
 
 
 @router.post("/{cluster_id}/install-kyverno", response_model=KyvernoInstallResponse)
@@ -631,141 +589,95 @@ async def install_kyverno_with_token(
             detail="Cluster missing server URL or token"
         )
     
-    try:
-        # Create a K8s session
-        session_id, k8s_connector = create_k8s_session()
-        
+    # Build kubeconfig (no network I/O)
+    cluster_config = {
+        "server": cluster.server_url,
+        "insecure-skip-tls-verify": not cluster.verify_ssl,
+    }
+    if cluster.verify_ssl and cluster.ca_cert_data:
+        cluster_config["certificate-authority-data"] = cluster.ca_cert_data
+
+    kubeconfig_content = yaml.dump({
+        "apiVersion": "v1",
+        "kind": "Config",
+        "clusters": [{"name": "cluster", "cluster": cluster_config}],
+        "users": [{"name": "user", "user": {"token": sa_token.token}}],
+        "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
+        "current-context": "context",
+    })
+
+    # Run the blocking Helm+K8s operations in a thread so the event loop isn't stalled.
+    # Helm install can take several minutes, so use a generous timeout.
+    def _sync_install():
+        session_id, k8s = create_k8s_session()
         try:
-            # Create kubeconfig with token
-            # Note: When insecure-skip-tls-verify is true, don't include CA cert (Helm requirement)
-            cluster_config = {
-                "server": cluster.server_url,
-                "insecure-skip-tls-verify": not cluster.verify_ssl
-            }
-            
-            # Only include CA cert when SSL verification is enabled
-            if cluster.verify_ssl and cluster.ca_cert_data:
-                cluster_config["certificate-authority-data"] = cluster.ca_cert_data
-            
-            kubeconfig = {
-                "apiVersion": "v1",
-                "kind": "Config",
-                "clusters": [{
-                    "name": "cluster",
-                    "cluster": cluster_config
-                }],
-                "users": [{
-                    "name": "user",
-                    "user": {
-                        "token": sa_token.token
-                    }
-                }],
-                "contexts": [{
-                    "name": "context",
-                    "context": {
-                        "cluster": "cluster",
-                        "user": "user"
-                    }
-                }],
-                "current-context": "context"
-            }
-            
-            kubeconfig_content = yaml.dump(kubeconfig)
-            
-            # Connect to cluster
-            k8s_connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
-            
-            # Install Kyverno via Helm
-            result = k8s_connector.install_kyverno_helm(
+            k8s.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
+            return k8s.install_kyverno_helm(
                 namespace=request.namespace,
                 release_name=request.release_name,
-                create_namespace=request.create_namespace
+                create_namespace=request.create_namespace,
             )
-            
-            # Add audit log
-            audit = AuditLog(
-                action="kyverno_install_via_token",
-                resource_type="cluster",
-                resource_id=cluster_id,
-                details={
-                    "cluster_name": cluster.name,
-                    "namespace": request.namespace,
-                    "release_name": request.release_name,
-                    "service_account_id": sa_token.id
-                },
-                status="success"
-            )
-            db.add(audit)
-            db.commit()
-            
-            return KyvernoInstallResponse(**result)
-                
         finally:
-            # Close K8s session
             close_k8s_session(session_id)
-            
+
+    try:
+        result = await _run_k8s_in_thread(_sync_install, timeout=180.0)
+
+        audit = AuditLog(
+            action="kyverno_install_via_token",
+            resource_type="cluster",
+            resource_id=cluster_id,
+            details={
+                "cluster_name": cluster.name,
+                "namespace": request.namespace,
+                "release_name": request.release_name,
+                "service_account_id": sa_token.id,
+            },
+            status="success",
+        )
+        db.add(audit)
+        db.commit()
+        return KyvernoInstallResponse(**result)
+
     except HTTPException:
         raise
     except RuntimeError as e:
-        # Add audit log for failure
         audit = AuditLog(
             action="kyverno_install_via_token",
             resource_type="cluster",
             resource_id=cluster_id,
-            details={
-                "cluster_name": cluster.name,
-                "error": str(e)
-            },
+            details={"cluster_name": cluster.name, "error": str(e)},
             status="failure",
-            error_message=str(e)
+            error_message=str(e),
         )
         db.add(audit)
         db.commit()
-        
-        raise HTTPException(
-            status_code=400,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=400, detail=str(e))
     except subprocess.CalledProcessError as e:
-        # Add audit log for failure
+        err = e.stderr or e.stdout
         audit = AuditLog(
             action="kyverno_install_via_token",
             resource_type="cluster",
             resource_id=cluster_id,
-            details={
-                "cluster_name": cluster.name,
-                "error": f"{e.stderr or e.stdout}"
-            },
+            details={"cluster_name": cluster.name, "error": err},
             status="failure",
-            error_message=f"{e.stderr or e.stdout}"
+            error_message=err,
         )
         db.add(audit)
         db.commit()
-        
-        raise HTTPException(
-            status_code=500,
-            detail=f"Helm installation failed: {e.stderr or e.stdout}"
-        )
+        raise HTTPException(status_code=500, detail=f"Helm installation failed: {err}")
     except Exception as e:
-        # Add audit log for failure
         audit = AuditLog(
             action="kyverno_install_via_token",
             resource_type="cluster",
             resource_id=cluster_id,
-            details={
-                "cluster_name": cluster.name,
-                "error": str(e)
-            },
+            details={"cluster_name": cluster.name, "error": str(e)},
             status="failure",
-            error_message=str(e)
+            error_message=str(e),
         )
         db.add(audit)
         db.commit()
-        
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to install Kyverno: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to install Kyverno: {str(e)}")
 
 
 @router.post("/{cluster_id}/kyverno/install", response_model=KyvernoInstallResponse)
@@ -806,60 +718,40 @@ async def install_kyverno(
             detail="Cluster missing credentials. Please run cluster setup first."
         )
     
-    # Create temporary K8s session
-    session_id, connector = create_k8s_session()
-    
-    try:
-        # Create kubeconfig with token
-        cluster_config = {
-            "server": cluster.server_url,
-            "insecure-skip-tls-verify": not cluster.verify_ssl
-        }
-        if cluster.verify_ssl and cluster.ca_cert_data:
-            cluster_config["certificate-authority-data"] = cluster.ca_cert_data
-        
-        kubeconfig = {
-            "apiVersion": "v1",
-            "kind": "Config",
-            "clusters": [{
-                "name": "cluster",
-                "cluster": cluster_config
-            }],
-            "users": [{
-                "name": "user",
-                "user": {
-                    "token": sa_token.token
-                }
-            }],
-            "contexts": [{
-                "name": "context",
-                "context": {
-                    "cluster": "cluster",
-                    "user": "user"
-                }
-            }],
-            "current-context": "context"
-        }
-        
-        kubeconfig_content = yaml.dump(kubeconfig)
-        connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
-        
-        # Check if Helm is available
-        if not connector.check_helm_installed():
-            raise HTTPException(
-                status_code=400,
-                detail="Helm is not installed on this system. Please install Helm 3.x first."
+    cluster_config_install = {
+        "server": cluster.server_url,
+        "insecure-skip-tls-verify": not cluster.verify_ssl,
+    }
+    if cluster.verify_ssl and cluster.ca_cert_data:
+        cluster_config_install["certificate-authority-data"] = cluster.ca_cert_data
+
+    kubeconfig_content_install = yaml.dump({
+        "apiVersion": "v1",
+        "kind": "Config",
+        "clusters": [{"name": "cluster", "cluster": cluster_config_install}],
+        "users": [{"name": "user", "user": {"token": sa_token.token}}],
+        "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
+        "current-context": "context",
+    })
+
+    def _sync_install():
+        session_id, k8s = create_k8s_session()
+        try:
+            k8s.load_cluster_from_content(kubeconfig_content=kubeconfig_content_install)
+            if not k8s.check_helm_installed():
+                raise RuntimeError("Helm is not installed on this system. Please install Helm 3.x first.")
+            return k8s.install_kyverno_helm(
+                namespace=request.namespace,
+                release_name=request.release_name,
+                create_namespace=request.create_namespace,
+                values=request.values,
             )
-        
-        # Install Kyverno
-        result = connector.install_kyverno_helm(
-            namespace=request.namespace,
-            release_name=request.release_name,
-            create_namespace=request.create_namespace,
-            values=request.values
-        )
-        
-        # Add audit log
+        finally:
+            close_k8s_session(session_id)
+
+    try:
+        result = await _run_k8s_in_thread(_sync_install, timeout=180.0)
+
         audit = AuditLog(
             action="kyverno_install",
             resource_type="helm_release",
@@ -867,65 +759,50 @@ async def install_kyverno(
             details={
                 "cluster_id": cluster_id,
                 "release_name": request.release_name,
-                "namespace": request.namespace
+                "namespace": request.namespace,
             },
-            status="success"
+            status="success",
         )
         db.add(audit)
         db.commit()
-        
         return KyvernoInstallResponse(**result)
-        
+
+    except HTTPException:
+        raise
     except RuntimeError as e:
-        # Add audit log for failure
         audit = AuditLog(
             action="kyverno_install",
             resource_type="helm_release",
             resource_id=cluster_id,
             status="failure",
-            error_message=str(e)
+            error_message=str(e),
         )
         db.add(audit)
         db.commit()
-        
-        raise HTTPException(
-            status_code=400,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=400, detail=str(e))
     except subprocess.CalledProcessError as e:
-        # Add audit log for failure
+        err = e.stderr or e.stdout
         audit = AuditLog(
             action="kyverno_install",
             resource_type="helm_release",
             resource_id=cluster_id,
             status="failure",
-            error_message=f"{e.stderr or e.stdout}"
+            error_message=err,
         )
         db.add(audit)
         db.commit()
-        
-        raise HTTPException(
-            status_code=500,
-            detail=f"Helm installation failed: {e.stderr or e.stdout}"
-        )
+        raise HTTPException(status_code=500, detail=f"Helm installation failed: {err}")
     except Exception as e:
-        # Add audit log for failure
         audit = AuditLog(
             action="kyverno_install",
             resource_type="helm_release",
             resource_id=cluster_id,
             status="failure",
-            error_message=str(e)
+            error_message=str(e),
         )
         db.add(audit)
         db.commit()
-        
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to install Kyverno: {str(e)}"
-        )
-    finally:
-        close_k8s_session(session_id)
+        raise HTTPException(status_code=500, detail=f"Failed to install Kyverno: {str(e)}")
 
 
 @router.post("/{cluster_id}/kyverno/uninstall", response_model=KyvernoUninstallResponse)
@@ -959,50 +836,36 @@ async def uninstall_kyverno(
             detail="Cluster missing credentials. Please run cluster setup first."
         )
     
-    # Create temporary K8s session
-    session_id, connector = create_k8s_session()
-    
+    cluster_config_uninstall = {
+        "server": cluster.server_url,
+        "insecure-skip-tls-verify": not cluster.verify_ssl,
+    }
+    if cluster.verify_ssl and cluster.ca_cert_data:
+        cluster_config_uninstall["certificate-authority-data"] = cluster.ca_cert_data
+
+    kubeconfig_content_uninstall = yaml.dump({
+        "apiVersion": "v1",
+        "kind": "Config",
+        "clusters": [{"name": "cluster", "cluster": cluster_config_uninstall}],
+        "users": [{"name": "user", "user": {"token": sa_token.token}}],
+        "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
+        "current-context": "context",
+    })
+
+    def _sync_uninstall():
+        session_id, k8s = create_k8s_session()
+        try:
+            k8s.load_cluster_from_content(kubeconfig_content=kubeconfig_content_uninstall)
+            return k8s.uninstall_kyverno_helm(
+                release_name=request.release_name,
+                namespace=request.namespace,
+            )
+        finally:
+            close_k8s_session(session_id)
+
     try:
-        # Create kubeconfig with token
-        cluster_config = {
-            "server": cluster.server_url,
-            "insecure-skip-tls-verify": not cluster.verify_ssl
-        }
-        if cluster.verify_ssl and cluster.ca_cert_data:
-            cluster_config["certificate-authority-data"] = cluster.ca_cert_data
-        
-        kubeconfig = {
-            "apiVersion": "v1",
-            "kind": "Config",
-            "clusters": [{
-                "name": "cluster",
-                "cluster": cluster_config
-            }],
-            "users": [{
-                "name": "user",
-                "user": {
-                    "token": sa_token.token
-                }
-            }],
-            "contexts": [{
-                "name": "context",
-                "context": {
-                    "cluster": "cluster",
-                    "user": "user"
-                }
-            }],
-            "current-context": "context"
-        }
-        
-        kubeconfig_content = yaml.dump(kubeconfig)
-        connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
-        
-        result = connector.uninstall_kyverno_helm(
-            release_name=request.release_name,
-            namespace=request.namespace
-        )
-        
-        # Add audit log
+        result = await _run_k8s_in_thread(_sync_uninstall, timeout=120.0)
+
         audit = AuditLog(
             action="kyverno_uninstall",
             resource_type="helm_release",
@@ -1010,52 +873,39 @@ async def uninstall_kyverno(
             details={
                 "cluster_id": cluster_id,
                 "release_name": request.release_name,
-                "namespace": request.namespace
+                "namespace": request.namespace,
             },
-            status="success" if result["success"] else "failure"
+            status="success" if result["success"] else "failure",
         )
         db.add(audit)
         db.commit()
-        
         return KyvernoUninstallResponse(**result)
-        
+
+    except HTTPException:
+        raise
     except subprocess.CalledProcessError as e:
+        err = e.stderr or e.stdout
         audit = AuditLog(
             action="kyverno_uninstall",
             resource_type="helm_release",
             resource_id=cluster_id,
             status="failure",
-            error_message=f"{e.stderr or e.stdout}"
+            error_message=err,
         )
         db.add(audit)
         db.commit()
-        
-        raise HTTPException(
-            status_code=500,
-            detail=f"Helm uninstall failed: {e.stderr or e.stdout}"
-        )
+        raise HTTPException(status_code=500, detail=f"Helm uninstall failed: {err}")
     except Exception as e:
         audit = AuditLog(
             action="kyverno_uninstall",
             resource_type="helm_release",
             resource_id=cluster_id,
             status="failure",
-            error_message=str(e)
+            error_message=str(e),
         )
         db.add(audit)
         db.commit()
-        
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to uninstall Kyverno: {str(e)}"
-        )
-    finally:
-        close_k8s_session(session_id)
-        
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to uninstall Kyverno: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to uninstall Kyverno: {str(e)}")
 
 
 @router.get("/{cluster_id}", response_model=ClusterResponse)

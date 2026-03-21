@@ -11,6 +11,7 @@ interface AuthContextType {
   login: (credentials: LoginRequest) => Promise<{ success: boolean; error?: string }>;
   signup: (data: SignupRequest) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
+  refreshUser: () => Promise<void>;
   token: string | null;
 }
 
@@ -106,6 +107,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   };
 
+  // Refresh user data from server
+  const refreshUser = async () => {
+    const storedToken = token || localStorage.getItem('auth_token');
+    if (storedToken) {
+      await loadUser(storedToken);
+    }
+  };
+
   const value: AuthContextType = {
     user,
     loading,
@@ -113,6 +122,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     login,
     signup,
     logout,
+    refreshUser,
     token,
   };
 

@@ -199,6 +199,40 @@ export async function getAllUsers(token: string): Promise<ApiResponse<User[]>> {
   return fetchApi<User[]>('/auth/users', {}, token);
 }
 
+export async function updateProfile(data: { email?: string; full_name?: string }): Promise<ApiResponse<User>> {
+  return fetchApi<User>('/auth/me', {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<ApiResponse<{ success: boolean; message: string }>> {
+  return fetchApi('/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+}
+
+export async function addUser(data: { username: string; password: string; role: string; email?: string; full_name?: string }): Promise<ApiResponse<User>> {
+  return fetchApi<User>('/auth/add-user', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteUser(userId: number): Promise<ApiResponse<void>> {
+  return fetchApi(`/auth/users/${userId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function adminUpdateUser(userId: number, data: { role?: string; is_active?: boolean; email?: string; full_name?: string }): Promise<ApiResponse<User>> {
+  return fetchApi<User>(`/auth/users/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
 // ============== Clusters API ==============
 
 export async function getClusters(): Promise<ApiResponse<Cluster[]>> {

@@ -1,23 +1,37 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Database, Shield, Users, User, Lock, CheckCircle, AlertCircle, Loader2, Trash2, Plus, X, Edit2, Save, Eye, EyeOff } from 'lucide-react';
-import ClusterManagement from '../components/ClusterManagement/ClusterManagement';
+import {
+  User,
+  Lock,
+  Users,
+  Shield,
+  CheckCircle,
+  AlertCircle,
+  Loader2,
+  Trash2,
+  Plus,
+  X,
+  Edit2,
+  Save,
+  Eye,
+  EyeOff,
+} from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { updateProfile, changePassword, getAllUsers, addUser, deleteUser, adminUpdateUser } from '../lib/api';
 import type { User as UserType } from '../types';
 
-export default function Settings() {
+export default function Profile() {
   const { user, token, refreshUser } = useAuth();
   const isAdmin = user?.role === 'admin';
 
-  // Profile state
+  // ── Profile ─────────────────────────────────────────────────────────────────
   const [profileEmail, setProfileEmail] = useState(user?.email || '');
   const [profileFullName, setProfileFullName] = useState(user?.full_name || '');
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileMsg, setProfileMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Password state
+  // ── Password ─────────────────────────────────────────────────────────────────
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -26,14 +40,13 @@ export default function Settings() {
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordMsg, setPasswordMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Team members state (admin only)
+  // ── Team members (admin only) ─────────────────────────────────────────────
   const [teamMembers, setTeamMembers] = useState<UserType[]>([]);
   const [teamLoading, setTeamLoading] = useState(false);
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [editingUserId, setEditingUserId] = useState<number | null>(null);
   const [editRole, setEditRole] = useState<string>('');
 
-  // Add user form
   const [newUsername, setNewUsername] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
@@ -42,7 +55,6 @@ export default function Settings() {
   const [addUserSaving, setAddUserSaving] = useState(false);
   const [addUserMsg, setAddUserMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Sync profile fields when user changes
   useEffect(() => {
     if (user) {
       setProfileEmail(user.email || '');
@@ -50,11 +62,8 @@ export default function Settings() {
     }
   }, [user]);
 
-  // Load team members on mount (admin only)
   useEffect(() => {
-    if (isAdmin && token) {
-      loadTeamMembers();
-    }
+    if (isAdmin && token) loadTeamMembers();
   }, [isAdmin, token]);
 
   async function loadTeamMembers() {
@@ -62,9 +71,7 @@ export default function Settings() {
     setTeamLoading(true);
     try {
       const response = await getAllUsers(token);
-      if (response.data) {
-        setTeamMembers(response.data);
-      }
+      if (response.data) setTeamMembers(response.data);
     } catch {
       // ignore
     } finally {
@@ -210,13 +217,19 @@ export default function Settings() {
 
   return (
     <div className="p-8">
+      {/* Page Header */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-slate-900 mb-2">Settings</h1>
-        <p className="text-slate-600">Configure your platform preferences, manage team members, and cluster connections</p>
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+            <User className="w-5 h-5 text-indigo-600" />
+          </div>
+          <h1 className="text-3xl font-bold text-slate-900">User Profile</h1>
+        </div>
+        <p className="text-slate-600 ml-13">Manage your account information, password, and team</p>
       </div>
 
       <div className="space-y-6">
-        {/* Profile Section */}
+        {/* ── Profile ─────────────────────────────────────────────────── */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
           <div className="flex items-center gap-3 mb-6">
             <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
@@ -290,7 +303,7 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Change Password Section */}
+        {/* ── Change Password ──────────────────────────────────────────── */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
           <div className="flex items-center gap-3 mb-6">
             <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
@@ -374,21 +387,7 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Cluster Management Section */}
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
-              <Database className="w-5 h-5 text-emerald-600" />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900">Kubernetes Clusters</h2>
-              <p className="text-sm text-slate-600">Manage cluster connections and configurations</p>
-            </div>
-          </div>
-          <ClusterManagement />
-        </div>
-
-        {/* Team Members (admin only) */}
+        {/* ── Team Members (admin only) ────────────────────────────────── */}
         {isAdmin && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
             <div className="flex items-center justify-between mb-6">
@@ -416,7 +415,7 @@ export default function Settings() {
               </div>
             ) : (
               <div className="space-y-2">
-                {teamMembers.map(member => (
+                {teamMembers.map((member) => (
                   <div key={member.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-slate-200 rounded-full flex items-center justify-center">
@@ -512,7 +511,7 @@ export default function Settings() {
           </div>
         )}
 
-        {/* Account Info for non-admin users */}
+        {/* ── Account Details (non-admin) ──────────────────────────────── */}
         {!isAdmin && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
             <div className="flex items-center gap-3 mb-4">
@@ -527,12 +526,20 @@ export default function Settings() {
             <div className="grid grid-cols-2 gap-4">
               <div className="p-4 bg-slate-50 rounded-lg">
                 <div className="text-xs font-medium text-slate-500 mb-1">Account Role</div>
-                <div className="text-sm font-semibold text-slate-900">{user?.role === 'admin' ? 'Administrator' : 'User'}</div>
+                <div className="text-sm font-semibold text-slate-900">
+                  {user?.role === 'admin' ? 'Administrator' : 'User'}
+                </div>
               </div>
               <div className="p-4 bg-slate-50 rounded-lg">
                 <div className="text-xs font-medium text-slate-500 mb-1">Member Since</div>
                 <div className="text-sm font-semibold text-slate-900">
-                  {user?.created_at ? new Date(user.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '-'}
+                  {user?.created_at
+                    ? new Date(user.created_at).toLocaleDateString('en-US', {
+                        month: 'long',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })
+                    : '-'}
                 </div>
               </div>
             </div>
@@ -540,7 +547,7 @@ export default function Settings() {
         )}
       </div>
 
-      {/* Add User Modal */}
+      {/* ── Add User Modal ───────────────────────────────────────────────── */}
       {showAddUserModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
