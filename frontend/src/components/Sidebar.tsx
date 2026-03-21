@@ -1,28 +1,31 @@
+'use client';
+
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { LayoutDashboard, ShoppingBag, FileCode, ScrollText, Server, UserCircle, Shield } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useCluster } from '../contexts/ClusterContext';
 
-type SidebarProps = {
-  activeView: string;
-  onViewChange: (view: string) => void;
-};
+const menuItems = [
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/marketplace', label: 'Marketplace', icon: ShoppingBag },
+  { href: '/sandbox', label: 'Sandbox', icon: FileCode },
+  { href: '/audit', label: 'Audit Logs', icon: ScrollText },
+  { href: '/clusters', label: 'Manage Clusters', icon: Server },
+  { href: '/policy-manager', label: 'Policy Manager', icon: Shield },
+  { href: '/profile', label: 'User Profile', icon: UserCircle },
+];
 
-export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
+export default function Sidebar() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const { selectedClusterId } = useCluster();
+  const pathname = usePathname();
 
-  const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'marketplace', label: 'Marketplace', icon: ShoppingBag },
-    { id: 'sandbox', label: 'Sandbox', icon: FileCode },
-    { id: 'audit', label: 'Audit Logs', icon: ScrollText },
-    { id: 'clusters', label: 'Manage Clusters', icon: Server },
-    // ...(isAdmin ? [{ id: 'policy-manager', label: 'Policy Manager', icon: Shield }] : []),
-    { id: 'policy-manager', label: 'Policy Manager', icon: Shield },
-    { id: 'profile', label: 'User Profile', icon: UserCircle },
-  ];
+  // Preserve cluster in URL across navigation
+  const clusterSuffix = selectedClusterId ? `?cluster=${selectedClusterId}` : '';
 
   return (
-    <div className="w-64 bg-slate-900 text-white min-h-screen flex flex-col">
+    <div className="fixed top-0 left-0 w-64 bg-slate-900 text-white h-screen flex flex-col flex-shrink-0 overflow-y-auto z-30">
       <div className="p-6 border-b border-slate-700">
         <div className="flex items-center gap-2">
           <div className="w-10 h-10 bg-gradient-to-br from-emerald-400 to-cyan-500 rounded-lg flex items-center justify-center">
@@ -35,22 +38,26 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
       </div>
 
       <nav className="flex-1 p-4">
-        <ul className="space-y-2">
+        <ul className="space-y-1">
           {menuItems.map((item) => {
             const Icon = item.icon;
+            const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
             return (
-              <li key={item.id}>
-                <button
-                  onClick={() => onViewChange(item.id)}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                    activeView === item.id
-                      ? 'bg-emerald-600 text-white'
+              <li key={item.href}>
+                <Link
+                  href={`${item.href}${clusterSuffix}`}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-150 ${
+                    isActive
+                      ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-900/30'
                       : 'text-slate-300 hover:bg-slate-800 hover:text-white'
                   }`}
                 >
-                  <Icon className="w-5 h-5" />
-                  <span className="font-medium">{item.label}</span>
-                </button>
+                  <Icon className="w-5 h-5 flex-shrink-0" />
+                  <span className="font-medium text-sm">{item.label}</span>
+                  {isActive && (
+                    <span className="ml-auto w-1.5 h-1.5 rounded-full bg-white/60" />
+                  )}
+                </Link>
               </li>
             );
           })}
@@ -58,13 +65,13 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
       </nav>
 
       <div className="p-4 border-t border-slate-700">
-        <div className="flex items-center gap-3 px-4 py-3">
-          <div className="w-8 h-8 bg-slate-700 rounded-full flex items-center justify-center">
-            <span className="text-sm font-medium">
+        <div className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-slate-800 transition-colors cursor-default">
+          <div className="w-8 h-8 bg-gradient-to-br from-slate-500 to-slate-600 rounded-full flex items-center justify-center flex-shrink-0">
+            <span className="text-sm font-semibold">
               {(user?.full_name || user?.username || 'U').charAt(0).toUpperCase()}
             </span>
           </div>
-          <div className="overflow-hidden">
+          <div className="overflow-hidden min-w-0">
             <div className="text-sm font-medium truncate">
               {user?.full_name || user?.username || 'User'}
             </div>

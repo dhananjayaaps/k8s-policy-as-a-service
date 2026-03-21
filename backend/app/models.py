@@ -37,7 +37,7 @@ class Cluster(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    policies = relationship("PolicyDeployment", back_populates="cluster")
+    policies = relationship("PolicyDeployment", back_populates="cluster", cascade="all, delete-orphan")
     service_accounts = relationship("ServiceAccountToken", back_populates="cluster", cascade="all, delete-orphan")
 
 
