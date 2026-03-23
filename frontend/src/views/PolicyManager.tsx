@@ -120,8 +120,7 @@ function policyToForm(policy: Policy): PolicyForm {
 
 export default function PolicyManager() {
   const { user } = useAuth();
-//   const isAdmin = user?.role === 'admin';
-    const isAdmin = true; // TEMP: allow access for all users while we develop the UI
+  const isAdmin = user?.role === 'admin';
 
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [loading, setLoading] = useState(true);

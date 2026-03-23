@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { getClusters } from '../lib/api';
 import { saveSelectedCluster, getSelectedCluster } from '../lib/clusterStorage';
+import { useAuth } from './AuthContext';
 import type { Cluster } from '../types';
 
 type ClusterContextType = {
@@ -19,10 +20,22 @@ export function ClusterProvider({ children }: { children: ReactNode }) {
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [selectedClusterId, setSelectedClusterIdState] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const { isAuthenticated, loading: authLoading } = useAuth();
 
   useEffect(() => {
-    loadClusters();
-  }, []);
+    if (authLoading) {
+      // Auth is still initialising — keep cluster loading state true
+      setLoading(true);
+      return;
+    }
+    if (isAuthenticated) {
+      loadClusters();
+    } else {
+      setClusters([]);
+      setSelectedClusterIdState(null);
+      setLoading(false);
+    }
+  }, [isAuthenticated, authLoading]);
 
   async function loadClusters() {
     setLoading(true);

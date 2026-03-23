@@ -92,6 +92,11 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit, customToken?
       };
     }
 
+    // 204 No Content (e.g. DELETE) — no body to parse
+    if (response.status === 204 || response.headers.get('content-length') === '0') {
+      return { data: null, error: null, status: response.status };
+    }
+
     const data = await response.json();
     return { data, error: null, status: response.status };
   } catch (err) {

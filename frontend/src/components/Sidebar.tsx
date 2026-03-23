@@ -2,18 +2,19 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, ShoppingBag, FileCode, ScrollText, Server, UserCircle, Shield } from 'lucide-react';
+import { LayoutDashboard, ShoppingBag, FileCode, ScrollText, Server, UserCircle, Shield, Users } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useCluster } from '../contexts/ClusterContext';
 
 const menuItems = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/marketplace', label: 'Marketplace', icon: ShoppingBag },
-  { href: '/sandbox', label: 'Sandbox', icon: FileCode },
-  { href: '/audit', label: 'Audit Logs', icon: ScrollText },
-  { href: '/clusters', label: 'Manage Clusters', icon: Server },
-  { href: '/policy-manager', label: 'Policy Manager', icon: Shield },
-  { href: '/profile', label: 'User Profile', icon: UserCircle },
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, adminOnly: false },
+  { href: '/marketplace', label: 'Marketplace', icon: ShoppingBag, adminOnly: false },
+  { href: '/sandbox', label: 'Sandbox', icon: FileCode, adminOnly: false },
+  { href: '/audit', label: 'Audit Logs', icon: ScrollText, adminOnly: false },
+  { href: '/clusters', label: 'Manage Clusters', icon: Server, adminOnly: false },
+  { href: '/policy-manager', label: 'Policy Manager', icon: Shield, adminOnly: true },
+  { href: '/user-management', label: 'User Management', icon: Users, adminOnly: true },
+  { href: '/profile', label: 'User Profile', icon: UserCircle, adminOnly: false },
 ];
 
 export default function Sidebar() {
@@ -39,7 +40,7 @@ export default function Sidebar() {
 
       <nav className="flex-1 p-4">
         <ul className="space-y-1">
-          {menuItems.map((item) => {
+          {menuItems.filter((item) => !item.adminOnly || user?.role === 'admin').map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
             return (
