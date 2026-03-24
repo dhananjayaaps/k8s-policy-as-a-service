@@ -718,14 +718,11 @@ export default function PolicyManager() {
                     </span>
                   ) : null}
                 </div>
-                <div className="border border-slate-300 rounded-lg overflow-hidden">
-                  <CodeEditor
-                    value={form.yaml_template}
-                    onChange={(v) => setForm((f) => ({ ...f, yaml_template: v }))}
-                    onValidate={(_valid, errors) => setYamlErrors(errors)}
-                    height="380px"
-                  />
-                </div>
+                <CodeEditor
+                  value={form.yaml_template}
+                  onChange={(v) => setForm((f) => ({ ...f, yaml_template: v }))}
+                  onValidate={(_valid, errors) => setYamlErrors(errors)}
+                />
               </div>
 
               {/* Parameters — collapsible */}
