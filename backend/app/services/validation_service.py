@@ -15,6 +15,25 @@ logger = logging.getLogger(__name__)
 K8S_NAME_PATTERN = re.compile(r'^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$')
 K8S_NAME_MAX_LENGTH = 253
 
+# Pattern for Jinja2 template expressions: {{ var }}, {{ var | filter }}, {% %}, {# #}
+JINJA2_EXPR_PATTERN = re.compile(r'\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}')
+
+
+def _substitute_jinja2_placeholders(yaml_content: str) -> str:
+    """
+    Replace Jinja2 template expressions with YAML-safe placeholder values
+    so that yaml.safe_load can parse the template for structural validation.
+
+    Uses an unquoted alphanumeric placeholder so it stays valid whether the
+    expression appears bare, inside quotes, or as part of a larger string.
+    """
+    return JINJA2_EXPR_PATTERN.sub('PLACEHOLDER', yaml_content)
+
+
+def _has_jinja2_syntax(yaml_content: str) -> bool:
+    """Check if the YAML content contains Jinja2 template syntax."""
+    return bool(JINJA2_EXPR_PATTERN.search(yaml_content))
+
 
 def validate_k8s_name(name: str) -> Optional[str]:
     """Validate a Kubernetes resource name (RFC 1123 subdomain)."""
@@ -48,6 +67,7 @@ class ValidationService:
     def validate_yaml(self, yaml_content: str) -> Dict[str, Any]:
         """
         Validate YAML syntax.
+        Handles Jinja2 template expressions by substituting placeholders.
         
         Args:
             yaml_content: YAML string to validate
@@ -61,8 +81,18 @@ class ValidationService:
             "warnings": [],
         }
         
+        # Substitute Jinja2 template expressions before parsing
+        parse_content = yaml_content
+        has_templates = _has_jinja2_syntax(yaml_content)
+        if has_templates:
+            parse_content = _substitute_jinja2_placeholders(yaml_content)
+            result["warnings"].append(
+                "YAML contains template variables ({{ ... }}). "
+                "Structure validated with placeholder values."
+            )
+        
         try:
-            docs = list(yaml.safe_load_all(yaml_content))
+            docs = list(yaml.safe_load_all(parse_content))
             if not docs or all(d is None for d in docs):
                 result["valid"] = False
                 result["errors"].append("Empty YAML document")
@@ -94,8 +124,16 @@ class ValidationService:
         if not yaml_result["valid"]:
             return yaml_result
         
+        # Carry over warnings from YAML validation
+        result["warnings"].extend(yaml_result.get("warnings", []))
+        
+        # Substitute Jinja2 placeholders for structural validation
+        parse_content = policy_yaml
+        if _has_jinja2_syntax(policy_yaml):
+            parse_content = _substitute_jinja2_placeholders(policy_yaml)
+        
         try:
-            policy = yaml.safe_load(policy_yaml)
+            policy = yaml.safe_load(parse_content)
         except yaml.YAMLError as e:
             result["valid"] = False
             result["errors"].append(f"Failed to parse YAML: {e}")

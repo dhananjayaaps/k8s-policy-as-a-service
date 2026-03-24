@@ -8,6 +8,9 @@ interface CodeEditorProps {
   onChange: (value: string) => void;
   onValidate?: (isValid: boolean, errors: string[]) => void;
   readOnly?: boolean;
+  /** Render as an inline editor (dark, with line numbers) instead of the click-to-fullscreen preview */
+  inline?: boolean;
+  height?: string;
 }
 
 export default function CodeEditor({
@@ -15,6 +18,8 @@ export default function CodeEditor({
   onChange,
   onValidate,
   readOnly = false,
+  inline = false,
+  height = '100%',
 }: CodeEditorProps) {
   const [showFullscreen, setShowFullscreen] = useState(false);
   const [editValue, setEditValue] = useState(value);
@@ -121,6 +126,56 @@ export default function CodeEditor({
 
   const lineCount = editValue.split('\n').length;
 
+  // ── Inline mode (always-visible editor with line numbers) ──
+  if (inline) {
+    const inlineLineCount = value.split('\n').length;
+    const handleInlineKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const textarea = e.currentTarget;
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const newVal = value.substring(0, start) + '  ' + value.substring(end);
+        onChange(newVal);
+        setTimeout(() => {
+          textarea.selectionStart = textarea.selectionEnd = start + 2;
+        }, 0);
+      }
+    };
+
+    return (
+      <div className="flex flex-col rounded-lg overflow-hidden border border-slate-700" style={{ height }}>
+        <div className="flex-1 flex overflow-hidden">
+          {/* Line numbers */}
+          <div
+            className="bg-slate-800 text-slate-500 text-right py-3 pr-3 pl-3 select-none overflow-y-hidden border-r border-slate-700 flex-shrink-0"
+            style={{ fontSize: '13px', lineHeight: '1.6' }}
+          >
+            {Array.from({ length: inlineLineCount }, (_, i) => (
+              <div key={i + 1} className="font-mono" style={{ height: `${13 * 1.6}px` }}>
+                {i + 1}
+              </div>
+            ))}
+          </div>
+          {/* Editor */}
+          <textarea
+            value={value}
+            onChange={(e) => {
+              onChange(e.target.value);
+              validateYAML(e.target.value);
+            }}
+            onKeyDown={handleInlineKeyDown}
+            readOnly={readOnly}
+            className="flex-1 px-4 py-3 font-mono text-[13px] text-slate-100 bg-slate-900 resize-none focus:outline-none overflow-y-auto"
+            style={{ tabSize: 2, lineHeight: '1.6' }}
+            spellCheck={false}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // ── Default mode (preview + click-to-fullscreen) ──
   return (
     <>
       {/* Preview/Click area */}

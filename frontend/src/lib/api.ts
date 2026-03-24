@@ -78,8 +78,12 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit, customToken?
         } else if (typeof errorData.detail === 'string') {
           errorMessage = errorData.detail;
         } else if (typeof errorData.detail === 'object' && errorData.detail !== null) {
-          // Handle structured error objects (e.g. configuration_required)
-          errorMessage = errorData.detail.message || JSON.stringify(errorData.detail);
+          // Handle structured error objects with errors array (e.g. validation errors)
+          if (errorData.detail.message && Array.isArray(errorData.detail.errors) && errorData.detail.errors.length > 0) {
+            errorMessage = errorData.detail.message + '\n' + errorData.detail.errors.join('\n');
+          } else {
+            errorMessage = errorData.detail.message || JSON.stringify(errorData.detail);
+          }
         }
       } catch {
         // Ignore parse errors

@@ -232,7 +232,8 @@ export default function PolicyManager() {
           setSaveMsg(null);
         }, 1200);
       } else {
-        setSaveMsg({ type: 'error', text: response.error || 'Failed to save policy.' });
+        const errText = response.error || 'Failed to save policy.';
+        setSaveMsg({ type: 'error', text: errText });
       }
     } catch {
       setSaveMsg({ type: 'error', text: 'Failed to save policy.' });
@@ -760,18 +761,32 @@ export default function PolicyManager() {
             {/* Save message */}
             {saveMsg && (
               <div
-                className={`mx-6 mb-4 flex items-center gap-2 p-3 rounded-lg text-sm ${
+                className={`mx-6 mb-4 p-3 rounded-lg text-sm ${
                   saveMsg.type === 'success'
                     ? 'bg-green-50 text-green-800'
                     : 'bg-red-50 text-red-800'
                 }`}
               >
-                {saveMsg.type === 'success' ? (
-                  <CheckCircle className="w-4 h-4 flex-shrink-0" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                )}
-                {saveMsg.text}
+                <div className="flex items-start gap-2">
+                  {saveMsg.type === 'success' ? (
+                    <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  )}
+                  <div className="flex-1">
+                    {saveMsg.text.includes('\n') ? (
+                      <ul className="space-y-1">
+                        {saveMsg.text.split('\n').map((line, i) => (
+                          <li key={i} className={i === 0 ? 'font-medium' : 'text-xs opacity-90 ml-1'}>
+                            {i === 0 ? line : `• ${line}`}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      saveMsg.text
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 

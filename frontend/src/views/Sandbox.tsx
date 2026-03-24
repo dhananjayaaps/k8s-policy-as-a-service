@@ -338,6 +338,7 @@ export default function Sandbox() {
               <CodeEditor
                 value={policyYaml}
                 onChange={setPolicyYaml}
+                inline
                 height="100%"
               />
             </div>
@@ -352,6 +353,7 @@ export default function Sandbox() {
               <CodeEditor
                 value={resourceYaml}
                 onChange={setResourceYaml}
+                inline
                 height="100%"
               />
             </div>
