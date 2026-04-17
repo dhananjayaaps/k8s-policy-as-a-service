@@ -20,7 +20,9 @@ import type {
   ClusterConnectResponse,
   TokenConnectRequest,
   KyvernoStatus,
-  NamespaceListResponse
+  NamespaceListResponse,
+  HelmChart,
+  HelmRelease,
 } from '../types';
 
 // Import mock data
@@ -897,4 +899,136 @@ export async function getDashboardData(clusterId: string): Promise<ApiResponse<D
     error: null,
     status: 200,
   };
+}
+
+// ============== Helm Charts API ==============
+
+export async function getHelmCharts(): Promise<ApiResponse<HelmChart[]>> {
+  return fetchApi<HelmChart[]>('/helm/charts');
+}
+
+export async function getHelmChartById(id: number): Promise<ApiResponse<HelmChart>> {
+  return fetchApi<HelmChart>(`/helm/charts/${id}`);
+}
+
+export async function createHelmChart(data: {
+  name: string;
+  repo_url?: string;
+  chart_yaml: string;
+  values_yaml?: string;
+  description?: string;
+  version?: string;
+  app_version?: string;
+  icon?: string;
+  is_active?: boolean;
+}): Promise<ApiResponse<HelmChart>> {
+  return fetchApi<HelmChart>('/helm/charts', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateHelmChart(
+  id: number,
+  data: {
+    name?: string;
+    repo_url?: string;
+    chart_yaml?: string;
+    values_yaml?: string;
+    description?: string;
+    version?: string;
+    app_version?: string;
+    icon?: string;
+    is_active?: boolean;
+  }
+): Promise<ApiResponse<HelmChart>> {
+  return fetchApi<HelmChart>(`/helm/charts/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteHelmChart(id: number): Promise<ApiResponse<{ message: string }>> {
+  return fetchApi<{ message: string }>(`/helm/charts/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function validateHelmYaml(yamlContent: string): Promise<ApiResponse<{
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}>> {
+  return fetchApi('/helm/validate', {
+    method: 'POST',
+    body: JSON.stringify({ yaml_content: yamlContent }),
+  });
+}
+
+// ============== Helm Releases API ==============
+
+export async function getHelmReleases(options?: {
+  cluster_id?: number;
+  chart_id?: number;
+}): Promise<ApiResponse<HelmRelease[]>> {
+  const params = new URLSearchParams();
+  if (options?.cluster_id) params.append('cluster_id', options.cluster_id.toString());
+  if (options?.chart_id) params.append('chart_id', options.chart_id.toString());
+  const qs = params.toString();
+  return fetchApi<HelmRelease[]>(`/helm/releases${qs ? `?${qs}` : ''}`);
+}
+
+export async function getHelmReleaseById(id: number): Promise<ApiResponse<HelmRelease>> {
+  return fetchApi<HelmRelease>(`/helm/releases/${id}`);
+}
+
+export async function updateHelmRelease(
+  id: number,
+  data: { release_name?: string; namespace?: string; values_yaml?: string; status?: string }
+): Promise<ApiResponse<HelmRelease>> {
+  return fetchApi<HelmRelease>(`/helm/releases/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deployHelmChart(req: {
+  chart_id: number;
+  cluster_id: number;
+  release_name: string;
+  namespace?: string;
+  values_yaml?: string;
+}): Promise<ApiResponse<{ success: boolean; message: string; release_id?: number }>> {
+  return fetchApi('/helm/deploy', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+export async function deployHelmChartMulti(req: {
+  chart_id: number;
+  cluster_id: number;
+  releases: Array<{ release_name: string; namespace: string; values_yaml?: string }>;
+}): Promise<ApiResponse<{ success: boolean; message: string; results: any[] }>> {
+  return fetchApi('/helm/deploy-multi', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+export async function uninstallHelmRelease(
+  releaseId: number
+): Promise<ApiResponse<{ success: boolean; message: string }>> {
+  return fetchApi('/helm/uninstall', {
+    method: 'POST',
+    body: JSON.stringify({ release_id: releaseId }),
+  });
+}
+
+export async function deleteHelmRelease(
+  releaseId: number
+): Promise<ApiResponse<{ message: string }>> {
+  return fetchApi<{ message: string }>(`/helm/releases/${releaseId}`, {
+    method: 'DELETE',
+  });
 }

@@ -14,7 +14,7 @@ from pathlib import Path
 import yaml
 
 from app.db import init_db, get_db
-from app.routers import clusters, policies, reports, auth
+from app.routers import clusters, policies, reports, auth, helm
 from app.services.auth import create_default_admin
 
 # Configure logging
@@ -77,6 +77,7 @@ app.include_router(auth.router)
 app.include_router(clusters.router)
 app.include_router(policies.router)
 app.include_router(reports.router)
+app.include_router(helm.router)
 
 
 # ============ Root Endpoints ============

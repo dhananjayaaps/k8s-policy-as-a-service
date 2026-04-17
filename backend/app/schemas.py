@@ -397,6 +397,127 @@ class ClusterStatsResponse(BaseModel):
     
     # Metadata
     generated_at: str = Field(..., description="ISO timestamp when stats were generated")
+
+
+# ============ Helm Chart Schemas ============
+
+class HelmChartBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    repo_url: Optional[str] = None
+    chart_yaml: str = Field(..., description="Chart.yaml content")
+    values_yaml: Optional[str] = Field(None, description="Default values.yaml content")
+    description: Optional[str] = None
+    version: Optional[str] = None
+    app_version: Optional[str] = None
+    icon: Optional[str] = None
+    is_active: bool = True
+
+
+class HelmChartCreate(HelmChartBase):
+    pass
+
+
+class HelmChartUpdate(BaseModel):
+    name: Optional[str] = None
+    repo_url: Optional[str] = None
+    chart_yaml: Optional[str] = None
+    values_yaml: Optional[str] = None
+    description: Optional[str] = None
+    version: Optional[str] = None
+    app_version: Optional[str] = None
+    icon: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class HelmChartResponse(HelmChartBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class HelmReleaseBase(BaseModel):
+    chart_id: int
+    cluster_id: int
+    release_name: str = Field(..., min_length=1, max_length=255)
+    namespace: str = Field(default="default")
+    values_yaml: Optional[str] = None
+
+
+class HelmReleaseCreate(HelmReleaseBase):
+    pass
+
+
+class HelmReleaseUpdate(BaseModel):
+    release_name: Optional[str] = None
+    namespace: Optional[str] = None
+    values_yaml: Optional[str] = None
+    status: Optional[str] = None
+
+
+class HelmReleaseResponse(HelmReleaseBase):
+    id: int
+    status: str
+    revision: int
+    error_message: Optional[str] = None
+    deployed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class HelmDeployRequest(BaseModel):
+    """Deploy a helm chart to a cluster namespace"""
+    chart_id: int
+    cluster_id: int
+    release_name: str = Field(..., min_length=1, max_length=255)
+    namespace: str = Field(default="default")
+    values_yaml: Optional[str] = Field(None, description="Custom values.yaml override")
+
+
+class HelmMultiDeployRequest(BaseModel):
+    """Deploy a helm chart to multiple namespaces"""
+    chart_id: int
+    cluster_id: int
+    releases: List[Dict[str, Any]] = Field(
+        ...,
+        description="List of {release_name, namespace, values_yaml} objects"
+    )
+
+
+class HelmDeployResponse(BaseModel):
+    success: bool
+    message: str
+    release_id: Optional[int] = None
+
+
+class HelmMultiDeployResponse(BaseModel):
+    success: bool
+    message: str
+    results: List[Dict[str, Any]] = []
+
+
+class HelmUninstallRequest(BaseModel):
+    release_id: int
+
+
+class HelmUninstallResponse(BaseModel):
+    success: bool
+    message: str
+
+
+class HelmValidateRequest(BaseModel):
+    yaml_content: str = Field(..., description="YAML content to validate")
+
+
+class HelmValidateResponse(BaseModel):
+    valid: bool
+    errors: List[str] = []
+    warnings: List[str] = []
     
     class Config:
         from_attributes = True

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, ShoppingBag, FileCode, ScrollText, Server, UserCircle, Shield, Users } from 'lucide-react';
+import { LayoutDashboard, ShoppingBag, FileCode, ScrollText, Server, UserCircle, Shield, Users, Package } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useCluster } from '../contexts/ClusterContext';
 
@@ -13,6 +13,7 @@ const menuItems = [
   { href: '/audit', label: 'Audit Logs', icon: ScrollText, adminOnly: false },
   { href: '/clusters', label: 'Manage Clusters', icon: Server, adminOnly: false },
   { href: '/policy-manager', label: 'Policy Manager', icon: Shield, adminOnly: true },
+  { href: '/helm-charts', label: 'Helm Charts', icon: Package, adminOnly: true },
   { href: '/user-management', label: 'User Management', icon: Users, adminOnly: true },
   { href: '/profile', label: 'User Profile', icon: UserCircle, adminOnly: false },
 ];

@@ -103,6 +103,49 @@ class PolicyDeployment(Base):
     policy = relationship("Policy", back_populates="deployments")
 
 
+class HelmChart(Base):
+    """Helm chart template — stores Chart.yaml + values.yaml for reuse"""
+    __tablename__ = "helm_charts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    repo_url = Column(String(500), nullable=True)  # e.g. https://charts.bitnami.com/bitnami
+    chart_yaml = Column(Text, nullable=False)  # Chart.yaml content
+    values_yaml = Column(Text, nullable=True)  # Default values.yaml content
+    description = Column(Text, nullable=True)
+    version = Column(String(100), nullable=True)
+    app_version = Column(String(100), nullable=True)
+    icon = Column(String(500), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    releases = relationship("HelmRelease", back_populates="chart", cascade="all, delete-orphan")
+
+
+class HelmRelease(Base):
+    """Tracks a helm release deployed to a cluster/namespace"""
+    __tablename__ = "helm_releases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    chart_id = Column(Integer, ForeignKey("helm_charts.id"), nullable=False)
+    cluster_id = Column(Integer, ForeignKey("clusters.id"), nullable=False)
+    release_name = Column(String(255), nullable=False)
+    namespace = Column(String(255), default="default")
+    values_yaml = Column(Text, nullable=True)  # Per-release custom values
+    status = Column(String(50), default="pending")  # pending, deployed, failed, uninstalled
+    revision = Column(Integer, default=1)
+    error_message = Column(Text, nullable=True)
+    deployed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    chart = relationship("HelmChart", back_populates="releases")
+    cluster = relationship("Cluster")
+
+
 class AuditLog(Base):
     """Audit log for all operations"""
     __tablename__ = "audit_logs"

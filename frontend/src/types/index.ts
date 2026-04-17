@@ -195,3 +195,35 @@ export type DashboardData = {
   // Metadata
   generatedAt: string;
 };
+
+// ============ Helm Chart Types ============
+
+export type HelmChart = {
+  id: number;
+  name: string;
+  repo_url: string | null;
+  chart_yaml: string;
+  values_yaml: string | null;
+  description: string | null;
+  version: string | null;
+  app_version: string | null;
+  icon: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HelmRelease = {
+  id: number;
+  chart_id: number;
+  cluster_id: number;
+  release_name: string;
+  namespace: string;
+  values_yaml: string | null;
+  status: string;
+  revision: number;
+  error_message: string | null;
+  deployed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
