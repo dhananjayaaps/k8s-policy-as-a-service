@@ -24,14 +24,17 @@ import type { Policy } from '../types';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const CATEGORY_OPTIONS = [
-  'security',
-  'best-practices',
-  'cost',
-  'reliability',
-  'governance',
-  'networking',
-  'other',
+const CATEGORY_OPTIONS: { value: string; label: string; icon: string }[] = [
+  { value: 'security',            label: 'Security',            icon: '🛡️' },
+  { value: 'best-practices',      label: 'Best Practices',      icon: '✅' },
+  { value: 'cost',                label: 'Cost Optimization',   icon: '💰' },
+  { value: 'resource-management', label: 'Resource Management', icon: '📦' },
+  { value: 'reliability',         label: 'Reliability',         icon: '🔄' },
+  { value: 'pod-security',        label: 'Pod Security',        icon: '🔒' },
+  { value: 'governance',          label: 'Governance',          icon: '📋' },
+  { value: 'networking',          label: 'Networking',          icon: '🌐' },
+  { value: 'cost-optimization',   label: 'Cost Optimization',   icon: '💲' },
+  { value: 'other',               label: 'Other',               icon: '📁' },
 ];
 
 const SEVERITY_OPTIONS = ['low', 'medium', 'high'] as const;
@@ -640,19 +643,19 @@ export default function PolicyManager() {
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
-                  <input
-                    type="text"
-                    list="pm-category-list"
+                  <select
                     value={form.category}
                     onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
-                    placeholder="e.g. security"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 text-sm"
-                  />
-                  <datalist id="pm-category-list">
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 text-sm bg-white appearance-none"
+                    style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center' }}
+                  >
+                    <option value="" disabled>Select a category...</option>
                     {CATEGORY_OPTIONS.map((c) => (
-                      <option key={c} value={c} />
+                      <option key={c.value} value={c.value}>
+                        {c.icon}  {c.label}
+                      </option>
                     ))}
-                  </datalist>
+                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Severity</label>
