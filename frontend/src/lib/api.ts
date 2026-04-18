@@ -324,6 +324,7 @@ export async function deleteCluster(id: number): Promise<ApiResponse<{ message: 
 export async function connectClusterViaKubeconfig(request: {
   kubeconfig_content: string;
   context?: string;
+  skip_tls_verify?: boolean;
 }): Promise<ApiResponse<{
   success: boolean;
   message: string;

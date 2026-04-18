@@ -89,6 +89,47 @@ async def _run_k8s_in_thread(func, timeout: float = _K8S_TIMEOUT):
 
 # ============ Helper Functions ============
 
+
+def _resolve_cluster_kubeconfig(cluster, db: Session) -> str:
+    """
+    Resolve kubeconfig content for a cluster.
+    Tries service-account token first, then falls back to stored kubeconfig_content.
+    Returns the kubeconfig YAML string.
+    Raises HTTPException if no credentials are available.
+    """
+    # Try service account token first
+    sa_token = db.query(ServiceAccountToken).filter(
+        ServiceAccountToken.cluster_id == cluster.id,
+        ServiceAccountToken.is_active == True
+    ).first()
+
+    if sa_token and cluster.server_url:
+        cluster_cfg = {
+            "server": cluster.server_url,
+            "insecure-skip-tls-verify": not cluster.verify_ssl,
+        }
+        if cluster.verify_ssl and cluster.ca_cert_data:
+            cluster_cfg["certificate-authority-data"] = cluster.ca_cert_data
+
+        return yaml.dump({
+            "apiVersion": "v1",
+            "kind": "Config",
+            "clusters": [{"name": "cluster", "cluster": cluster_cfg}],
+            "users": [{"name": "user", "user": {"token": sa_token.token}}],
+            "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
+            "current-context": "context",
+        })
+
+    # Fall back to stored kubeconfig_content
+    if cluster.kubeconfig_content:
+        return cluster.kubeconfig_content
+
+    raise HTTPException(
+        status_code=400,
+        detail="Cluster has no credentials. Add a service account token or kubeconfig."
+    )
+
+
 def is_internal_ip(url: str) -> bool:
     """
     Check if a URL contains an internal/private IP address.
@@ -199,10 +240,25 @@ async def connect_cluster(request: ClusterConnectRequest):
     """
     connector = get_k8s_connector()
     
+    kubeconfig_to_use = request.kubeconfig_content
+
+    # If skip_tls_verify is set, patch the kubeconfig to disable SSL verification
+    if request.skip_tls_verify:
+        try:
+            kc = yaml.safe_load(kubeconfig_to_use)
+            for cluster_entry in kc.get("clusters", []):
+                cluster_data = cluster_entry.get("cluster", {})
+                cluster_data["insecure-skip-tls-verify"] = True
+                cluster_data.pop("certificate-authority-data", None)
+                cluster_data.pop("certificate-authority", None)
+            kubeconfig_to_use = yaml.dump(kc)
+        except yaml.YAMLError:
+            pass  # Fall through and let the normal validation catch it
+
     try:
         # Load cluster configuration from content
         connector.load_cluster_from_content(
-            kubeconfig_content=request.kubeconfig_content,
+            kubeconfig_content=kubeconfig_to_use,
             context=request.context
         )
         
@@ -298,48 +354,13 @@ async def list_clusters(
 async def list_namespaces(cluster_id: int, db: Session = Depends(get_db)):
     """
     List all namespaces in a specific cluster.
-    
-    This endpoint:
-    1. Retrieves cluster from database
-    2. Creates temporary K8s session with cluster credentials
-    3. Lists all namespaces
-    4. Closes session
     """
     # Get cluster from database
     cluster = db.query(Cluster).filter(Cluster.id == cluster_id).first()
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
     
-    # Get an active service account token for this cluster
-    sa_token = db.query(ServiceAccountToken).filter(
-        ServiceAccountToken.cluster_id == cluster_id,
-        ServiceAccountToken.is_active == True
-    ).first()
-    
-    if not sa_token or not cluster.server_url:
-        raise HTTPException(
-            status_code=400,
-            detail="Cluster missing credentials. Please run cluster setup first."
-        )
-    
-    # Create temporary K8s session
-    # Build kubeconfig from saved credentials (fast, no network I/O)
-    # Note: When insecure-skip-tls-verify is true, don't include CA cert (Helm requirement)
-    cluster_config = {
-        "server": cluster.server_url,
-        "insecure-skip-tls-verify": not cluster.verify_ssl
-    }
-    if cluster.verify_ssl and cluster.ca_cert_data:
-        cluster_config["certificate-authority-data"] = cluster.ca_cert_data
-
-    kubeconfig_content = yaml.dump({
-        "apiVersion": "v1",
-        "kind": "Config",
-        "clusters": [{"name": "cluster", "cluster": cluster_config}],
-        "users": [{"name": "user", "user": {"token": sa_token.token}}],
-        "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
-        "current-context": "context",
-    })
+    kubeconfig_content = _resolve_cluster_kubeconfig(cluster, db)
 
     # Run blocking K8s call in a thread-pool worker so the event loop stays responsive
     def _sync():
@@ -369,33 +390,7 @@ async def get_cluster_info(cluster_id: int, db: Session = Depends(get_db)):
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
     
-    # Get an active service account token
-    sa_token = db.query(ServiceAccountToken).filter(
-        ServiceAccountToken.cluster_id == cluster_id,
-        ServiceAccountToken.is_active == True
-    ).first()
-    
-    if not sa_token or not cluster.server_url:
-        raise HTTPException(
-            status_code=400,
-            detail="Cluster missing credentials. Please run cluster setup first."
-        )
-    
-    cluster_config = {
-        "server": cluster.server_url,
-        "insecure-skip-tls-verify": not cluster.verify_ssl
-    }
-    if cluster.verify_ssl and cluster.ca_cert_data:
-        cluster_config["certificate-authority-data"] = cluster.ca_cert_data
-
-    kubeconfig_content = yaml.dump({
-        "apiVersion": "v1",
-        "kind": "Config",
-        "clusters": [{"name": "cluster", "cluster": cluster_config}],
-        "users": [{"name": "user", "user": {"token": sa_token.token}}],
-        "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
-        "current-context": "context",
-    })
+    kubeconfig_content = _resolve_cluster_kubeconfig(cluster, db)
 
     def _sync():
         session_id, k8s = create_k8s_session()
@@ -424,33 +419,7 @@ async def check_kyverno_status(cluster_id: int, db: Session = Depends(get_db)):
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
     
-    # Get an active service account token
-    sa_token = db.query(ServiceAccountToken).filter(
-        ServiceAccountToken.cluster_id == cluster_id,
-        ServiceAccountToken.is_active == True
-    ).first()
-    
-    if not sa_token or not cluster.server_url:
-        raise HTTPException(
-            status_code=400,
-            detail="Cluster missing credentials. Please run cluster setup first."
-        )
-    
-    cluster_config = {
-        "server": cluster.server_url,
-        "insecure-skip-tls-verify": not cluster.verify_ssl
-    }
-    if cluster.verify_ssl and cluster.ca_cert_data:
-        cluster_config["certificate-authority-data"] = cluster.ca_cert_data
-
-    kubeconfig_content = yaml.dump({
-        "apiVersion": "v1",
-        "kind": "Config",
-        "clusters": [{"name": "cluster", "cluster": cluster_config}],
-        "users": [{"name": "user", "user": {"token": sa_token.token}}],
-        "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
-        "current-context": "context",
-    })
+    kubeconfig_content = _resolve_cluster_kubeconfig(cluster, db)
 
     def _sync():
         session_id, k8s = create_k8s_session()
@@ -490,33 +459,7 @@ async def get_kyverno_comprehensive_status(cluster_id: int, db: Session = Depend
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
     
-    # Get an active service account token
-    sa_token = db.query(ServiceAccountToken).filter(
-        ServiceAccountToken.cluster_id == cluster_id,
-        ServiceAccountToken.is_active == True
-    ).first()
-    
-    if not sa_token or not cluster.server_url:
-        raise HTTPException(
-            status_code=400,
-            detail="Cluster missing credentials. Please run cluster setup first."
-        )
-    
-    cluster_config = {
-        "server": cluster.server_url,
-        "insecure-skip-tls-verify": not cluster.verify_ssl
-    }
-    if cluster.verify_ssl and cluster.ca_cert_data:
-        cluster_config["certificate-authority-data"] = cluster.ca_cert_data
-
-    kubeconfig_content = yaml.dump({
-        "apiVersion": "v1",
-        "kind": "Config",
-        "clusters": [{"name": "cluster", "cluster": cluster_config}],
-        "users": [{"name": "user", "user": {"token": sa_token.token}}],
-        "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
-        "current-context": "context",
-    })
+    kubeconfig_content = _resolve_cluster_kubeconfig(cluster, db)
 
     def _sync():
         session_id, k8s = create_k8s_session()
@@ -541,73 +484,17 @@ async def install_kyverno_with_token(
     db: Session = Depends(get_db)
 ):
     """
-    Install Kyverno on a cluster using a saved service account token.
+    Install Kyverno on a cluster using stored credentials.
     
-    This method uses the service account token from the database to connect
-    to the cluster and install Kyverno via Helm (without SSH).
-    
-    Benefits:
-    - No SSH access needed
-    - Can be done remotely from anywhere
-    - Uses stored credentials
-    - Independent per cluster
-    
-    Prerequisites:
-    - Cluster must be saved in database with valid service account token
-    - Token must have sufficient permissions (cluster-admin recommended)
-    - Helm must be accessible from the API server
+    Supports both service-account-token and kubeconfig-based clusters.
     """
     # Get cluster from database
     cluster = db.query(Cluster).filter(Cluster.id == cluster_id).first()
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
     
-    # Get service account token
-    if request.service_account_id:
-        sa_token = db.query(ServiceAccountToken).filter(
-            ServiceAccountToken.id == request.service_account_id,
-            ServiceAccountToken.cluster_id == cluster_id,
-            ServiceAccountToken.is_active == True
-        ).first()
-    else:
-        # Use first active token for the cluster
-        sa_token = db.query(ServiceAccountToken).filter(
-            ServiceAccountToken.cluster_id == cluster_id,
-            ServiceAccountToken.is_active == True
-        ).first()
-    
-    if not sa_token:
-        raise HTTPException(
-            status_code=404,
-            detail="No active service account token found for this cluster"
-        )
-    
-    # Check if cluster has required connection info
-    if not cluster.server_url or not sa_token.token:
-        raise HTTPException(
-            status_code=400,
-            detail="Cluster missing server URL or token"
-        )
-    
-    # Build kubeconfig (no network I/O)
-    cluster_config = {
-        "server": cluster.server_url,
-        "insecure-skip-tls-verify": not cluster.verify_ssl,
-    }
-    if cluster.verify_ssl and cluster.ca_cert_data:
-        cluster_config["certificate-authority-data"] = cluster.ca_cert_data
+    kubeconfig_content = _resolve_cluster_kubeconfig(cluster, db)
 
-    kubeconfig_content = yaml.dump({
-        "apiVersion": "v1",
-        "kind": "Config",
-        "clusters": [{"name": "cluster", "cluster": cluster_config}],
-        "users": [{"name": "user", "user": {"token": sa_token.token}}],
-        "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
-        "current-context": "context",
-    })
-
-    # Run the blocking Helm+K8s operations in a thread so the event loop isn't stalled.
-    # Helm install can take several minutes, so use a generous timeout.
     def _sync_install():
         session_id, k8s = create_k8s_session()
         try:
@@ -631,7 +518,6 @@ async def install_kyverno_with_token(
                 "cluster_name": cluster.name,
                 "namespace": request.namespace,
                 "release_name": request.release_name,
-                "service_account_id": sa_token.id,
             },
             status="success",
         )
@@ -688,51 +574,14 @@ async def install_kyverno(
 ):
     """
     Install Kyverno using Helm chart on a specific cluster.
-    
-    This endpoint:
-    1. Retrieves cluster credentials from database
-    2. Creates temporary K8s session
-    3. Checks if Helm is installed
-    4. Adds Kyverno Helm repository
-    5. Installs Kyverno with specified configuration
-    6. Logs the installation to audit log
-    
-    Requirements:
-    - Cluster must be set up in database with valid credentials
-    - Helm 3.x must be installed on the system
+    Supports both service-account-token and kubeconfig-based clusters.
     """
     # Get cluster from database
     cluster = db.query(Cluster).filter(Cluster.id == cluster_id).first()
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
     
-    # Get an active service account token
-    sa_token = db.query(ServiceAccountToken).filter(
-        ServiceAccountToken.cluster_id == cluster_id,
-        ServiceAccountToken.is_active == True
-    ).first()
-    
-    if not sa_token or not cluster.server_url:
-        raise HTTPException(
-            status_code=400,
-            detail="Cluster missing credentials. Please run cluster setup first."
-        )
-    
-    cluster_config_install = {
-        "server": cluster.server_url,
-        "insecure-skip-tls-verify": not cluster.verify_ssl,
-    }
-    if cluster.verify_ssl and cluster.ca_cert_data:
-        cluster_config_install["certificate-authority-data"] = cluster.ca_cert_data
-
-    kubeconfig_content_install = yaml.dump({
-        "apiVersion": "v1",
-        "kind": "Config",
-        "clusters": [{"name": "cluster", "cluster": cluster_config_install}],
-        "users": [{"name": "user", "user": {"token": sa_token.token}}],
-        "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
-        "current-context": "context",
-    })
+    kubeconfig_content_install = _resolve_cluster_kubeconfig(cluster, db)
 
     def _sync_install():
         session_id, k8s = create_k8s_session()
@@ -813,44 +662,14 @@ async def uninstall_kyverno(
 ):
     """
     Uninstall Kyverno Helm release from a specific cluster.
-    
-    This removes:
-    - Kyverno deployments
-    - Services and ConfigMaps
-    - Note: CRDs and existing policies may remain
+    Supports both service-account-token and kubeconfig-based clusters.
     """
     # Get cluster from database
     cluster = db.query(Cluster).filter(Cluster.id == cluster_id).first()
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
     
-    # Get an active service account token
-    sa_token = db.query(ServiceAccountToken).filter(
-        ServiceAccountToken.cluster_id == cluster_id,
-        ServiceAccountToken.is_active == True
-    ).first()
-    
-    if not sa_token or not cluster.server_url:
-        raise HTTPException(
-            status_code=400,
-            detail="Cluster missing credentials. Please run cluster setup first."
-        )
-    
-    cluster_config_uninstall = {
-        "server": cluster.server_url,
-        "insecure-skip-tls-verify": not cluster.verify_ssl,
-    }
-    if cluster.verify_ssl and cluster.ca_cert_data:
-        cluster_config_uninstall["certificate-authority-data"] = cluster.ca_cert_data
-
-    kubeconfig_content_uninstall = yaml.dump({
-        "apiVersion": "v1",
-        "kind": "Config",
-        "clusters": [{"name": "cluster", "cluster": cluster_config_uninstall}],
-        "users": [{"name": "user", "user": {"token": sa_token.token}}],
-        "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
-        "current-context": "context",
-    })
+    kubeconfig_content_uninstall = _resolve_cluster_kubeconfig(cluster, db)
 
     def _sync_uninstall():
         session_id, k8s = create_k8s_session()

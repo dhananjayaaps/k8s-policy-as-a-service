@@ -101,6 +101,7 @@ class ClusterConnectRequest(BaseModel):
     """Request to connect to a cluster"""
     kubeconfig_content: str = Field(..., description="Kubeconfig YAML content")
     context: Optional[str] = Field(None, description="Kubernetes context to use")
+    skip_tls_verify: bool = Field(False, description="Skip TLS certificate verification (needed when using public IP not in cert SANs)")
 
 
 class ClusterConnectResponse(BaseModel):

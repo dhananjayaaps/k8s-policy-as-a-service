@@ -228,6 +228,21 @@ function SSHSetupForm({ loading, setLoading, setError, setSuccess, onSuccess }: 
         </div>
       </div>
 
+      {/* Port Requirement Notice */}
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="text-sm text-amber-900">
+            <p className="font-medium mb-1">Network Requirements</p>
+            <ul className="text-amber-700 list-disc list-inside space-y-1">
+              <li>Use the <strong>Public IP</strong> of your server</li>
+              <li>Open port <strong>22</strong> (SSH) on your firewall / security group</li>
+              <li>Open port <strong>6443</strong> (Kubernetes API) for cluster operations &amp; Kyverno install</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
       {/* SSH Connection Details */}
       <div className="space-y-4">
         <h3 className="font-semibold text-slate-900">SSH Connection</h3>
@@ -235,13 +250,13 @@ function SSHSetupForm({ loading, setLoading, setError, setSuccess, onSuccess }: 
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">
-              Host / IP Address *
+              Host / Public IP Address *
             </label>
             <input
               type="text"
               value={formData.host}
               onChange={(e) => setFormData({ ...formData, host: e.target.value })}
-              placeholder="192.168.1.100 or example.com"
+              placeholder="e.g. 54.123.45.67 or example.com"
               className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
               required
             />
@@ -421,6 +436,7 @@ function KubeconfigForm({ loading, setLoading, setError, setSuccess, onSuccess }
     kubeconfigContent: '',
     context: '',
     description: '',
+    skipTlsVerify: true,
   });
 
   async function handleSubmit(e: React.FormEvent) {
@@ -434,16 +450,44 @@ function KubeconfigForm({ loading, setLoading, setError, setSuccess, onSuccess }
       const connectResponse = await connectClusterViaKubeconfig({
         kubeconfig_content: formData.kubeconfigContent,
         context: formData.context || undefined,
+        skip_tls_verify: formData.skipTlsVerify,
       });
 
       if (connectResponse.error || !connectResponse.data?.success) {
         throw new Error(connectResponse.error || 'Failed to connect with kubeconfig');
       }
 
+      // If skip TLS is on, patch the kubeconfig before saving so future operations also skip TLS
+      let kubeconfigToSave = formData.kubeconfigContent;
+      if (formData.skipTlsVerify) {
+        try {
+          // Parse and patch the YAML properly
+          const lines = kubeconfigToSave.split('\n');
+          const patched: string[] = [];
+          let skipNextCaLine = false;
+          for (const line of lines) {
+            // Remove certificate-authority-data / certificate-authority lines
+            if (/^\s+certificate-authority(-data)?:/.test(line)) {
+              continue;
+            }
+            patched.push(line);
+            // After the "server:" line, insert insecure-skip-tls-verify
+            if (/^\s+server:\s/.test(line) && !skipNextCaLine) {
+              const indent = line.match(/^(\s+)/)?.[1] || '      ';
+              patched.push(`${indent}insecure-skip-tls-verify: true`);
+              skipNextCaLine = true;
+            }
+          }
+          kubeconfigToSave = patched.join('\n');
+        } catch {
+          // If patching fails, save as-is
+        }
+      }
+
       // If successful, create cluster in database
       const createResponse = await createCluster({
         name: formData.name,
-        kubeconfig_content: formData.kubeconfigContent,
+        kubeconfig_content: kubeconfigToSave,
         context: formData.context || undefined,
         description: formData.description || undefined,
       });
@@ -479,6 +523,21 @@ function KubeconfigForm({ loading, setLoading, setError, setSuccess, onSuccess }
         </div>
       </div>
 
+      {/* Port Requirement Notice */}
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="text-sm text-amber-900">
+            <p className="font-medium mb-1">Network Requirements</p>
+            <ul className="text-amber-700 list-disc list-inside space-y-1">
+              <li>Use the <strong>Public IP</strong> of your Kubernetes master node in the kubeconfig <code className="bg-amber-100 px-1 rounded">server</code> field (e.g. <code className="bg-amber-100 px-1 rounded">https://&lt;PUBLIC_IP&gt;:6443</code>)</li>
+              <li>Open port <strong>6443</strong> (Kubernetes API server) on your firewall / security group</li>
+              <li>If using a custom API port, open that port instead</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
       <div>
         <label className="block text-sm font-medium text-slate-700 mb-2">
           Cluster Name *
@@ -500,13 +559,14 @@ function KubeconfigForm({ loading, setLoading, setError, setSuccess, onSuccess }
         <textarea
           value={formData.kubeconfigContent}
           onChange={(e) => setFormData({ ...formData, kubeconfigContent: e.target.value })}
-          placeholder="apiVersion: v1&#10;kind: Config&#10;clusters:&#10;- cluster:&#10;    server: https://..."
+          placeholder="apiVersion: v1&#10;kind: Config&#10;clusters:&#10;- cluster:&#10;    server: https://<PUBLIC_IP>:6443&#10;    ..."
           rows={12}
           className="w-full px-4 py-2 border border-slate-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
           required
         />
         <p className="mt-2 text-xs text-slate-500">
-          Paste the complete YAML content from your kubeconfig file (~/.kube/config)
+          Paste the complete YAML content from your kubeconfig file (~/.kube/config).
+          Make sure the <strong>server URL uses your Public IP</strong> and port <strong>6443</strong> is open.
         </p>
       </div>
 
@@ -536,6 +596,24 @@ function KubeconfigForm({ loading, setLoading, setError, setSuccess, onSuccess }
         />
       </div>
 
+      <div className="space-y-2">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={formData.skipTlsVerify}
+            onChange={(e) => setFormData({ ...formData, skipTlsVerify: e.target.checked })}
+            className="text-emerald-600 focus:ring-emerald-500 rounded"
+          />
+          <span className="text-sm text-slate-700">
+            Skip TLS certificate verification
+          </span>
+        </label>
+        <p className="text-xs text-slate-500 ml-6">
+          Enable this if connecting via <strong>Public IP</strong> that is not in the cluster&apos;s TLS certificate SANs.
+          Common when the K8s API cert was generated with only the internal IP.
+        </p>
+      </div>
+
       <div className="flex justify-end gap-3 pt-4 border-t border-slate-200">
         <button
           type="button"
@@ -544,6 +622,7 @@ function KubeconfigForm({ loading, setLoading, setError, setSuccess, onSuccess }
             kubeconfigContent: '',
             context: '',
             description: '',
+            skipTlsVerify: true,
           })}
           className="px-4 py-2 text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
           disabled={loading}
@@ -639,6 +718,21 @@ function TokenForm({ loading, setLoading, setError, setSuccess, onSuccess }: any
         </div>
       </div>
 
+      {/* Port Requirement Notice */}
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="text-sm text-amber-900">
+            <p className="font-medium mb-1">Network Requirements</p>
+            <ul className="text-amber-700 list-disc list-inside space-y-1">
+              <li>Use the <strong>Public IP</strong> of your Kubernetes master node in the Server URL (e.g. <code className="bg-amber-100 px-1 rounded">https://&lt;PUBLIC_IP&gt;:6443</code>)</li>
+              <li>Open port <strong>6443</strong> (Kubernetes API server) on your firewall / security group</li>
+              <li>If using a custom API port, open that port instead</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
       <div>
         <label className="block text-sm font-medium text-slate-700 mb-2">
           Cluster Name *
@@ -655,13 +749,13 @@ function TokenForm({ loading, setLoading, setError, setSuccess, onSuccess }: any
 
       <div>
         <label className="block text-sm font-medium text-slate-700 mb-2">
-          Kubernetes API Server URL *
+          Kubernetes API Server URL * <span className="text-xs text-amber-600 font-normal">(Use Public IP, port 6443 must be open)</span>
         </label>
         <input
           type="url"
           value={formData.serverUrl}
           onChange={(e) => setFormData({ ...formData, serverUrl: e.target.value })}
-          placeholder="https://kubernetes.example.com:6443"
+          placeholder="https://<PUBLIC_IP>:6443"
           className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
           required
         />

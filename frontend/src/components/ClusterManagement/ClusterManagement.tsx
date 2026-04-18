@@ -10,13 +10,15 @@ import {
   XCircle, 
   AlertCircle,
   Database,
-  Loader2
+  Loader2,
+  Download
 } from 'lucide-react';
 import { 
   getClusters, 
   deleteCluster, 
   getKyvernoStatus,
-  updateCluster
+  updateCluster,
+  installKyverno
 } from '../../lib/api';
 import { useCluster } from '../../contexts/ClusterContext';
 import type { Cluster } from '../../types';
@@ -30,6 +32,7 @@ export default function ClusterManagement() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingCluster, setEditingCluster] = useState<Cluster | null>(null);
   const [kyvernoStatuses, setKyvernoStatuses] = useState<Record<number, boolean>>({});
+  const [installingKyverno, setInstallingKyverno] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     loadClusters();
@@ -49,6 +52,26 @@ export default function ClusterManagement() {
       });
     }
     setLoading(false);
+  }
+
+  async function handleInstallKyverno(clusterId: number) {
+    setInstallingKyverno(prev => ({ ...prev, [clusterId]: true }));
+    try {
+      const result = await installKyverno(clusterId, {
+        namespace: 'kyverno',
+        release_name: 'kyverno',
+        create_namespace: true,
+      });
+      if (result.data?.success) {
+        setKyvernoStatuses(prev => ({ ...prev, [clusterId]: true }));
+      } else {
+        alert(`Failed to install Kyverno: ${result.error || 'Unknown error'}`);
+      }
+    } catch {
+      alert('Failed to install Kyverno. Please check the cluster connection.');
+    } finally {
+      setInstallingKyverno(prev => ({ ...prev, [clusterId]: false }));
+    }
   }
 
   async function handleDelete(clusterId: number, clusterName: string) {
@@ -128,8 +151,10 @@ export default function ClusterManagement() {
               key={cluster.id}
               cluster={cluster}
               kyvernoInstalled={kyvernoStatuses[cluster.id]}
+              installingKyverno={installingKyverno[cluster.id] || false}
               onDelete={handleDelete}
               onEdit={(cluster) => setEditingCluster(cluster)}
+              onInstallKyverno={handleInstallKyverno}
             />
           ))}
         </div>
@@ -158,13 +183,17 @@ export default function ClusterManagement() {
 function ClusterCard({
   cluster,
   kyvernoInstalled,
+  installingKyverno,
   onDelete,
-  onEdit
+  onEdit,
+  onInstallKyverno
 }: {
   cluster: Cluster;
   kyvernoInstalled?: boolean;
+  installingKyverno: boolean;
   onDelete: (id: number, name: string) => void;
   onEdit: (cluster: Cluster) => void;
+  onInstallKyverno: (clusterId: number) => void;
 }) {
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-6 hover:shadow-md transition-shadow">
@@ -226,6 +255,29 @@ function ClusterCard({
                 )
               )}
             </div>
+
+            {/* Install Kyverno Button - only show when not installed */}
+            {kyvernoInstalled === false && (
+              <div className="mt-3">
+                <button
+                  onClick={() => onInstallKyverno(cluster.id)}
+                  disabled={installingKyverno}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {installingKyverno ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Installing Kyverno...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-3 h-3" />
+                      Install Kyverno
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
