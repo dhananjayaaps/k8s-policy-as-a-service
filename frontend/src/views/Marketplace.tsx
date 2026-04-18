@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Shield, DollarSign, Zap, FileText, Search, Rocket, Loader2, CheckCircle2, XCircle } from 'lucide-react';
-import { getPolicies, checkDeploymentStatus, quickDeployPolicy, quickUndeployPolicy } from '../lib/api';
+import { Shield, DollarSign, Zap, FileText, Search, Rocket, Loader2, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
+import { getPolicies, checkDeploymentStatus, quickDeployPolicy, quickUndeployPolicy, getKyvernoStatus } from '../lib/api';
 import { useCluster } from '../contexts/ClusterContext';
 import PolicyEditorModal from '../components/PolicyEditor/PolicyEditorModal';
 import type { Policy } from '../types';
@@ -33,6 +33,7 @@ export default function Marketplace() {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [deploymentStatus, setDeploymentStatus] = useState<PolicyDeploymentStatus>({});
   const [currentDeploymentParams, setCurrentDeploymentParams] = useState<Record<string, any>>({});
+  const [kyvernoInstalled, setKyvernoInstalled] = useState<boolean | null>(null);
   const { clusters, selectedClusterId } = useCluster();
 
   useEffect(() => {
@@ -40,12 +41,20 @@ export default function Marketplace() {
   }, []);
 
   useEffect(() => {
-    // Load deployment status when cluster changes
+    // Load deployment status and kyverno status when cluster changes
     if (selectedClusterId && policies.length > 0) {
       loadDeploymentStatuses();
     } else {
-      // Clear deployment statuses when no cluster selected
       setDeploymentStatus({});
+    }
+    // Check kyverno status
+    if (selectedClusterId) {
+      getKyvernoStatus(selectedClusterId).then(res => {
+        if (res.data) setKyvernoInstalled(res.data.installed);
+        else setKyvernoInstalled(null);
+      });
+    } else {
+      setKyvernoInstalled(null);
     }
   }, [selectedClusterId, policies]);
 
@@ -233,6 +242,28 @@ export default function Marketplace() {
           <p className="text-sm text-amber-800">
             Please select a cluster from the dropdown to view deployment status and deploy policies.
           </p>
+        </div>
+      )}
+
+      {/* Kyverno Not Installed Banner */}
+      {selectedClusterId && kyvernoInstalled === false && (
+        <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <AlertTriangle className="w-5 h-5 text-amber-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-amber-900">Kyverno is not installed on the selected cluster</p>
+              <p className="text-xs text-amber-700">Policies cannot be deployed without Kyverno. Go to Manage Clusters to install it.</p>
+            </div>
+          </div>
+          <a
+            href="/clusters"
+            className="flex-shrink-0 inline-flex items-center gap-2 px-4 py-2 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-700 transition-colors"
+          >
+            <Shield className="w-4 h-4" />
+            Install Kyverno
+          </a>
         </div>
       )}
 

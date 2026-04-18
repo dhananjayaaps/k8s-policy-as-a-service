@@ -17,13 +17,13 @@ import {
   getClusters, 
   deleteCluster, 
   getKyvernoStatus,
-  updateCluster,
-  installKyverno
+  updateCluster
 } from '../../lib/api';
 import { useCluster } from '../../contexts/ClusterContext';
 import type { Cluster } from '../../types';
 import AddClusterModal from './AddClusterModal';
 import EditClusterModal from './EditClusterModal';
+import InstallKyvernoModal from './InstallKyvernoModal';
 
 export default function ClusterManagement() {
   const { refreshClusters } = useCluster();
@@ -33,6 +33,7 @@ export default function ClusterManagement() {
   const [editingCluster, setEditingCluster] = useState<Cluster | null>(null);
   const [kyvernoStatuses, setKyvernoStatuses] = useState<Record<number, boolean>>({});
   const [installingKyverno, setInstallingKyverno] = useState<Record<number, boolean>>({});
+  const [kyvernoModalCluster, setKyvernoModalCluster] = useState<Cluster | null>(null);
 
   useEffect(() => {
     loadClusters();
@@ -55,23 +56,18 @@ export default function ClusterManagement() {
   }
 
   async function handleInstallKyverno(clusterId: number) {
-    setInstallingKyverno(prev => ({ ...prev, [clusterId]: true }));
-    try {
-      const result = await installKyverno(clusterId, {
-        namespace: 'kyverno',
-        release_name: 'kyverno',
-        create_namespace: true,
-      });
-      if (result.data?.success) {
-        setKyvernoStatuses(prev => ({ ...prev, [clusterId]: true }));
-      } else {
-        alert(`Failed to install Kyverno: ${result.error || 'Unknown error'}`);
-      }
-    } catch {
-      alert('Failed to install Kyverno. Please check the cluster connection.');
-    } finally {
-      setInstallingKyverno(prev => ({ ...prev, [clusterId]: false }));
+    // Find the cluster and show the install modal
+    const cluster = clusters.find(c => c.id === clusterId);
+    if (cluster) {
+      setKyvernoModalCluster(cluster);
     }
+  }
+
+  async function handleKyvernoInstallSuccess() {
+    if (kyvernoModalCluster) {
+      setKyvernoStatuses(prev => ({ ...prev, [kyvernoModalCluster.id]: true }));
+    }
+    setKyvernoModalCluster(null);
   }
 
   async function handleDelete(clusterId: number, clusterName: string) {
@@ -93,6 +89,20 @@ export default function ClusterManagement() {
     setShowAddModal(false);
     await loadClusters();
     await refreshClusters();
+    // After loading clusters, find the newest cluster and check if kyverno is installed
+    // If not, prompt to install
+    const response = await getClusters();
+    if (response.data && response.data.length > 0) {
+      // Get the most recently created cluster
+      const newest = response.data.reduce((a, b) =>
+        new Date(b.created_at) > new Date(a.created_at) ? b : a
+      );
+      // Check kyverno status for the new cluster
+      const status = await getKyvernoStatus(newest.id);
+      if (status.data && !status.data.installed) {
+        setKyvernoModalCluster(newest);
+      }
+    }
   }
 
   async function handleEditSuccess() {
@@ -174,6 +184,16 @@ export default function ClusterManagement() {
           cluster={editingCluster}
           onClose={() => setEditingCluster(null)}
           onSuccess={handleEditSuccess}
+        />
+      )}
+
+      {/* Install Kyverno Modal */}
+      {kyvernoModalCluster && (
+        <InstallKyvernoModal
+          clusterId={kyvernoModalCluster.id}
+          clusterName={kyvernoModalCluster.name}
+          onClose={() => setKyvernoModalCluster(null)}
+          onSuccess={handleKyvernoInstallSuccess}
         />
       )}
     </div>

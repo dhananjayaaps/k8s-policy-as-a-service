@@ -15,6 +15,7 @@ import yaml
 from app.db import get_db
 from app.models import Policy, PolicyDeployment, Cluster, AuditLog, ServiceAccountToken
 from app.services.auth import get_current_user
+from app.services.cluster_utils import resolve_cluster_kubeconfig
 from app.schemas import (
     PolicyCreate,
     PolicyUpdate,
@@ -438,37 +439,14 @@ async def deploy_policy(
     db.commit()
     db.refresh(deployment)
     
-    # Get service account token for cluster
-    sa_token = db.query(ServiceAccountToken).filter(
-        ServiceAccountToken.cluster_id == request.cluster_id,
-        ServiceAccountToken.is_active == True
-    ).first()
-    
-    if not sa_token or not cluster.server_url:
+    # Resolve kubeconfig for cluster
+    try:
+        kubeconfig_content_deploy = resolve_cluster_kubeconfig(cluster, db)
+    except HTTPException:
         deployment.status = "failed"
         deployment.error_message = "Cluster missing credentials. Please run cluster setup first."
         db.commit()
-        raise HTTPException(
-            status_code=400,
-            detail="Cluster missing credentials. Please run cluster setup first."
-        )
-    
-    # Connect to cluster and deploy
-    cluster_config_deploy = {
-        "server": cluster.server_url,
-        "insecure-skip-tls-verify": not cluster.verify_ssl,
-    }
-    if cluster.verify_ssl and cluster.ca_cert_data:
-        cluster_config_deploy["certificate-authority-data"] = cluster.ca_cert_data
-
-    kubeconfig_content_deploy = yaml.dump({
-        "apiVersion": "v1",
-        "kind": "Config",
-        "clusters": [{"name": "cluster", "cluster": cluster_config_deploy}],
-        "users": [{"name": "user", "user": {"token": sa_token.token}}],
-        "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
-        "current-context": "context",
-    })
+        raise
 
     def _sync_deploy():
         connector = get_k8s_connector()
@@ -662,33 +640,15 @@ async def remove_deployment(deployment_id: int, db: Session = Depends(get_db)):
     cluster = db.query(Cluster).filter(Cluster.id == deployment.cluster_id).first()
     
     if deployment.status == "deployed" and policy and cluster:
-        # Get service account token
-        sa_token = db.query(ServiceAccountToken).filter(
-            ServiceAccountToken.cluster_id == cluster.id,
-            ServiceAccountToken.is_active == True
-        ).first()
-        
-        if sa_token and cluster.server_url:
-            # Try to delete from cluster using token
+        # Resolve kubeconfig
+        try:
+            kubeconfig_content = resolve_cluster_kubeconfig(cluster, db)
+        except HTTPException:
+            kubeconfig_content = None
+
+        if kubeconfig_content:
             connector = get_k8s_connector()
             try:
-                cluster_config = {
-                    "server": cluster.server_url,
-                    "insecure-skip-tls-verify": not cluster.verify_ssl
-                }
-                if cluster.verify_ssl and cluster.ca_cert_data:
-                    cluster_config["certificate-authority-data"] = cluster.ca_cert_data
-                
-                kubeconfig = {
-                    "apiVersion": "v1",
-                    "kind": "Config",
-                    "clusters": [{"name": "cluster", "cluster": cluster_config}],
-                    "users": [{"name": "user", "user": {"token": sa_token.token}}],
-                    "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
-                    "current-context": "context"
-                }
-                
-                kubeconfig_content = yaml.dump(kubeconfig)
                 connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
                 connector.delete_policy(policy.name, namespace=deployment.namespace)
             except Exception as e:
@@ -1043,39 +1003,12 @@ async def list_kyverno_policies(cluster_id: int, db: Session = Depends(get_db)):
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
     
-    # Get service account token
-    sa_token = db.query(ServiceAccountToken).filter(
-        ServiceAccountToken.cluster_id == cluster_id,
-        ServiceAccountToken.is_active == True
-    ).first()
-    
-    if not sa_token or not cluster.server_url:
-        raise HTTPException(
-            status_code=400,
-            detail="Cluster missing credentials. Please run cluster setup first."
-        )
+    # Resolve kubeconfig
+    kubeconfig_content = resolve_cluster_kubeconfig(cluster, db)
     
     connector = get_k8s_connector()
     
     try:
-        import yaml
-        cluster_config = {
-            "server": cluster.server_url,
-            "insecure-skip-tls-verify": not cluster.verify_ssl
-        }
-        if cluster.verify_ssl and cluster.ca_cert_data:
-            cluster_config["certificate-authority-data"] = cluster.ca_cert_data
-        
-        kubeconfig = {
-            "apiVersion": "v1",
-            "kind": "Config",
-            "clusters": [{"name": "cluster", "cluster": cluster_config}],
-            "users": [{"name": "user", "user": {"token": sa_token.token}}],
-            "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
-            "current-context": "context"
-        }
-        
-        kubeconfig_content = yaml.dump(kubeconfig)
         connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
         
         policies = connector.list_kyverno_policies()
@@ -1306,40 +1239,12 @@ async def get_cluster_policy_reports(cluster_id: int, db: Session = Depends(get_
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
     
-    # Get service account token
-    sa_token = db.query(ServiceAccountToken).filter(
-        ServiceAccountToken.cluster_id == cluster_id,
-        ServiceAccountToken.is_active == True
-    ).first()
-    
-    if not sa_token or not cluster.server_url:
-        raise HTTPException(
-            status_code=400,
-            detail="Cluster missing credentials. Please run cluster setup first."
-        )
+    # Resolve kubeconfig
+    kubeconfig_content = resolve_cluster_kubeconfig(cluster, db)
     
     connector = get_k8s_connector()
     
     try:
-        import yaml
-        
-        cluster_config = {
-            "server": cluster.server_url,
-            "insecure-skip-tls-verify": not cluster.verify_ssl
-        }
-        if cluster.verify_ssl and cluster.ca_cert_data:
-            cluster_config["certificate-authority-data"] = cluster.ca_cert_data
-        
-        kubeconfig = {
-            "apiVersion": "v1",
-            "kind": "Config",
-            "clusters": [{"name": "cluster", "cluster": cluster_config}],
-            "users": [{"name": "user", "user": {"token": sa_token.token}}],
-            "contexts": [{"name": "context", "context": {"cluster": "cluster", "user": "user"}}],
-            "current-context": "context"
-        }
-        
-        kubeconfig_content = yaml.dump(kubeconfig)
         connector.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
         
         # Get policy reports from Kubernetes

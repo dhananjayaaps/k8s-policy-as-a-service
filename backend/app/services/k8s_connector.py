@@ -674,7 +674,7 @@ class K8sConnector:
                 return json.loads(result.stdout)
             
             return None
-        except (subprocess.TimeoutExpired, json.JSONDecodeError, subprocess.CalledProcessError):
+        except (subprocess.TimeoutExpired, json.JSONDecodeError, subprocess.CalledProcessError, FileNotFoundError):
             return None
     
     def uninstall_kyverno_helm(self, release_name: str = "kyverno", namespace: str = "kyverno") -> Dict[str, Any]:

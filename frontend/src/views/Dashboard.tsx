@@ -7,7 +7,7 @@ import {
   Layers, XCircle, BarChart3, ArrowUpRight, ArrowDownRight,
   Zap, Eye, ChevronRight
 } from 'lucide-react';
-import { getDashboardData } from '../lib/api';
+import { getDashboardData, getKyvernoStatus } from '../lib/api';
 import { useCluster } from '../contexts/ClusterContext';
 import type { DashboardData } from '../types';
 
@@ -91,6 +91,7 @@ export default function Dashboard() {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [kyvernoInstalled, setKyvernoInstalled] = useState<boolean | null>(null);
   const { clusters, selectedClusterId, loading: loadingClusters } = useCluster();
 
   const fetchData = useCallback(async (showRefresh = false) => {
@@ -103,6 +104,12 @@ export default function Dashboard() {
 
     const response = await getDashboardData(selectedClusterId.toString());
     if (response.data) setDashboardData(response.data);
+
+    // Check Kyverno status
+    const kyvernoRes = await getKyvernoStatus(selectedClusterId);
+    if (kyvernoRes.data) {
+      setKyvernoInstalled(kyvernoRes.data.installed);
+    }
 
     setLoading(false);
     setRefreshing(false);
@@ -230,6 +237,28 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
+
+      {/* Kyverno Status Banner */}
+      {kyvernoInstalled === false && (
+        <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <Shield className="w-5 h-5 text-amber-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-amber-900">Kyverno is not installed on this cluster</p>
+              <p className="text-xs text-amber-700">Policy enforcement requires Kyverno. Go to Manage Clusters to install it.</p>
+            </div>
+          </div>
+          <a
+            href="/clusters"
+            className="flex-shrink-0 inline-flex items-center gap-2 px-4 py-2 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-700 transition-colors"
+          >
+            <Shield className="w-4 h-4" />
+            Install Kyverno
+          </a>
+        </div>
+      )}
 
       {/* Top Row: Overall Score + Score Breakdown + Health Status */}
       <div className="grid grid-cols-12 gap-4 mb-4">
