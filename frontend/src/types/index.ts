@@ -159,6 +159,27 @@ export type ComplianceMetric = {
   recorded_at: string;
 };
 
+export type ScoreInsightFactor = {
+  factor: string;
+  impact: 'positive' | 'negative' | 'warning';
+  detail: string;
+};
+
+export type ScoreInsights = {
+  overall: ScoreInsightFactor[];
+  security: ScoreInsightFactor[];
+  cost: ScoreInsightFactor[];
+  reliability: ScoreInsightFactor[];
+};
+
+export type Recommendation = {
+  priority: 'critical' | 'high' | 'medium' | 'info';
+  title: string;
+  description: string;
+  action: string | null;
+  actionLabel: string | null;
+};
+
 export type DashboardData = {
   // Cluster info
   cluster_id: number;
@@ -176,6 +197,12 @@ export type DashboardData = {
   securityScore: number;
   costScore: number;
   reliabilityScore: number;
+  
+  // Score insights (reasons behind each score)
+  scoreInsights: ScoreInsights;
+  
+  // Actionable recommendations
+  recommendations: Recommendation[];
   
   // Violation statistics
   violationsCount: number;

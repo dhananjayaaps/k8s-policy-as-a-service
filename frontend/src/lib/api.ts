@@ -774,42 +774,9 @@ export async function getComplianceMetricsByCluster(clusterId: string): Promise<
 
 // ============== Dashboard API (combined data) ==============
 
-export type DashboardData = {
-  // Cluster info
-  cluster_id: number;
-  cluster_name: string;
-  
-  // Policy statistics
-  activePoliciesCount: number;
-  deployedPoliciesCount: number;
-  totalDeployments: number;
-  failedDeploymentsCount: number;
-  enforcementRate: number;
-  
-  // Compliance scores (calculated from real data)
-  overallScore: number;
-  securityScore: number;
-  costScore: number;
-  reliabilityScore: number;
-  
-  // Violation statistics
-  violationsCount: number;
-  violations24h: number;
-  violations7d: number;
-  violationTrend: 'increasing' | 'decreasing' | 'stable';
-  
-  // Activity metrics
-  totalLogs24h: number;
-  successCount24h: number;
-  successRate: number;
-  resourcesScanned: number;
-  
-  // Recent activity
-  recentLogs: AuditLog[];
-  
-  // Metadata
-  generatedAt: string;
-};
+// Re-export from types
+import type { DashboardData as DashboardDataType, ScoreInsights, Recommendation } from '../types';
+export type DashboardData = DashboardDataType;
 
 export async function getDashboardData(clusterId: string): Promise<ApiResponse<DashboardData>> {
   if (API_CONFIG.useMockData) {
@@ -843,6 +810,13 @@ export async function getDashboardData(clusterId: string): Promise<ApiResponse<D
         securityScore: metrics?.security_score || 90,
         costScore: metrics?.cost_score || 75,
         reliabilityScore: metrics?.reliability_score || 88,
+        scoreInsights: {
+          overall: [{ factor: 'Mock data — connect a real cluster for insights', impact: 'warning' as const, detail: '' }],
+          security: [],
+          cost: [],
+          reliability: [],
+        },
+        recommendations: [],
         violationsCount,
         violations24h: violationsCount,
         violations7d: violationsCount * 7,
@@ -886,6 +860,8 @@ export async function getDashboardData(clusterId: string): Promise<ApiResponse<D
       securityScore: stats.security_score || 0,
       costScore: stats.cost_score || 0,
       reliabilityScore: stats.reliability_score || 0,
+      scoreInsights: stats.score_insights || { overall: [], security: [], cost: [], reliability: [] },
+      recommendations: stats.recommendations || [],
       violationsCount: stats.violations_count || 0,
       violations24h: stats.violations_24h || 0,
       violations7d: stats.violations_7d || 0,

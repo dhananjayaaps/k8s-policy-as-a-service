@@ -1191,6 +1191,214 @@ async def get_cluster_stats(cluster_id: int, db: Session = Depends(get_db)):
     elif violations_count < avg_violations_per_day_7d * 0.5:
         violation_trend = "decreasing"
     
+    # ============ Score Insights ============
+    # Build detailed explanations for each score
+    
+    # --- Overall Score Insights ---
+    overall_factors = []
+    if deployment_success_rate < 100:
+        overall_factors.append({
+            "factor": f"Deployment success rate is {deployment_success_rate:.0f}%",
+            "impact": "negative",
+            "detail": f"{failed_deployments_count} of {total_deployments} deployments failed"
+        })
+    if deployed_policies_count == 0:
+        overall_factors.append({
+            "factor": "No policies are currently deployed",
+            "impact": "negative",
+            "detail": "Deploy policies from the Marketplace to start monitoring your cluster"
+        })
+    elif deployed_policies_count < 3:
+        overall_factors.append({
+            "factor": f"Only {deployed_policies_count} policy deployed",
+            "impact": "warning",
+            "detail": "Deploy more policies to improve coverage and compliance"
+        })
+    else:
+        overall_factors.append({
+            "factor": f"{deployed_policies_count} policies actively enforced",
+            "impact": "positive",
+            "detail": "Good policy coverage across the cluster"
+        })
+    if violations_count > 0:
+        overall_factors.append({
+            "factor": f"{violations_count} violation(s) in the last 24 hours",
+            "impact": "negative",
+            "detail": "Review and fix violations to improve your score"
+        })
+    else:
+        overall_factors.append({
+            "factor": "No violations in the last 24 hours",
+            "impact": "positive",
+            "detail": "Your cluster is violation-free"
+        })
+    
+    # --- Security Score Insights ---
+    security_factors = []
+    if security_deployments == 0:
+        security_factors.append({
+            "factor": "No security policies deployed",
+            "impact": "negative",
+            "detail": "Deploy security, pod-security, or best-practices policies from the Marketplace"
+        })
+    else:
+        security_factors.append({
+            "factor": f"{security_deployments} security policy/policies active",
+            "impact": "positive" if security_deployments >= 3 else "warning",
+            "detail": f"Categories covered: security, best-practices, pod-security"
+        })
+    if violations_count >= 3:
+        security_factors.append({
+            "factor": f"{violations_count} violations detected",
+            "impact": "negative",
+            "detail": "High violation count is reducing your security score"
+        })
+    
+    # Count total available security policies
+    total_security_policies = db.query(Policy).filter(
+        Policy.category.in_(["security", "best-practices", "pod-security"]),
+        Policy.is_active == True
+    ).count()
+    if total_security_policies > security_deployments:
+        security_factors.append({
+            "factor": f"{total_security_policies - security_deployments} security policies available but not deployed",
+            "impact": "warning",
+            "detail": "Visit the Marketplace to deploy additional security policies"
+        })
+    
+    # --- Cost Score Insights ---
+    cost_factors = []
+    if cost_deployments == 0:
+        cost_factors.append({
+            "factor": "No cost/resource policies deployed",
+            "impact": "negative",
+            "detail": "Deploy resource-management or cost-optimization policies to control spending"
+        })
+    else:
+        cost_factors.append({
+            "factor": f"{cost_deployments} cost policy/policies active",
+            "impact": "positive" if cost_deployments >= 2 else "warning",
+            "detail": "Monitoring resource limits and cost controls"
+        })
+    if failed_deployments_count > 0:
+        cost_factors.append({
+            "factor": f"{failed_deployments_count} failed deployment(s)",
+            "impact": "negative",
+            "detail": "Failed deployments reduce cost efficiency score"
+        })
+    
+    total_cost_policies = db.query(Policy).filter(
+        Policy.category.in_(["resource-management", "cost-optimization"]),
+        Policy.is_active == True
+    ).count()
+    if total_cost_policies > cost_deployments:
+        cost_factors.append({
+            "factor": f"{total_cost_policies - cost_deployments} cost policies available but not deployed",
+            "impact": "warning",
+            "detail": "Deploy resource limit and cost optimization policies"
+        })
+    
+    # --- Reliability Score Insights ---
+    reliability_factors = []
+    if failed_deployments_count > 0:
+        reliability_factors.append({
+            "factor": f"{failed_deployments_count} failed deployment(s)",
+            "impact": "negative",
+            "detail": f"Each failure reduces reliability by up to 10 points (penalty: {int(failure_penalty)} pts)"
+        })
+    else:
+        reliability_factors.append({
+            "factor": "No failed deployments",
+            "impact": "positive",
+            "detail": "All deployments are running successfully"
+        })
+    if total_logs_24h == 0:
+        reliability_factors.append({
+            "factor": "No recent activity logged",
+            "impact": "warning",
+            "detail": "Deploy and manage policies to build activity history"
+        })
+    elif recent_success_rate > 10:
+        reliability_factors.append({
+            "factor": f"Recent operations have a {success_rate}% success rate",
+            "impact": "positive" if success_rate >= 90 else "warning",
+            "detail": f"{success_count_24h} of {total_logs_24h} operations succeeded in 24h"
+        })
+    
+    score_insights = {
+        "overall": overall_factors,
+        "security": security_factors,
+        "cost": cost_factors,
+        "reliability": reliability_factors,
+    }
+    
+    # ============ Recommendations ============
+    recommendations = []
+    
+    if deployed_policies_count == 0:
+        recommendations.append({
+            "priority": "critical",
+            "title": "Deploy your first policy",
+            "description": "Your cluster has no active policies. Visit the Marketplace to deploy security and compliance policies.",
+            "action": "marketplace",
+            "actionLabel": "Go to Marketplace"
+        })
+    
+    if security_deployments == 0:
+        recommendations.append({
+            "priority": "high",
+            "title": "Add security policies",
+            "description": "No security policies are enforced. Deploy pod-security or best-practices policies to protect your workloads.",
+            "action": "marketplace",
+            "actionLabel": "Browse Security Policies"
+        })
+    
+    if cost_deployments == 0:
+        recommendations.append({
+            "priority": "medium",
+            "title": "Add resource limit policies",
+            "description": "No cost/resource policies detected. Enforce resource limits to prevent runaway costs and ensure fair resource distribution.",
+            "action": "marketplace",
+            "actionLabel": "Browse Cost Policies"
+        })
+    
+    if failed_deployments_count > 0:
+        recommendations.append({
+            "priority": "high",
+            "title": f"Fix {failed_deployments_count} failed deployment(s)",
+            "description": "Some policy deployments have failed. Review the errors and redeploy to restore full enforcement.",
+            "action": "policy-manager",
+            "actionLabel": "View Failed Deployments"
+        })
+    
+    if enforcement_rate < 100 and active_policies_count > 0 and deployed_policies_count < active_policies_count:
+        not_deployed = active_policies_count - deployed_policies_count
+        recommendations.append({
+            "priority": "medium",
+            "title": f"Deploy {not_deployed} undeployed policy/policies",
+            "description": f"You have {not_deployed} active policy/policies that haven't been deployed yet. Deploy them to increase enforcement coverage.",
+            "action": "policy-manager",
+            "actionLabel": "View Policies"
+        })
+    
+    if violations_count > 0:
+        recommendations.append({
+            "priority": "high",
+            "title": "Resolve policy violations",
+            "description": f"{violations_count} violation(s) detected in the last 24 hours. Review the audit logs to identify and fix non-compliant resources.",
+            "action": "audit",
+            "actionLabel": "View Audit Logs"
+        })
+    
+    if overall_score >= 90 and len(recommendations) == 0:
+        recommendations.append({
+            "priority": "info",
+            "title": "Excellent compliance posture",
+            "description": "Your cluster has strong policy coverage with no violations. Keep monitoring and add new policies as your workloads evolve.",
+            "action": None,
+            "actionLabel": None
+        })
+    
     return {
         "cluster_id": cluster_id,
         "cluster_name": cluster.name,
@@ -1207,6 +1415,12 @@ async def get_cluster_stats(cluster_id: int, db: Session = Depends(get_db)):
         "security_score": security_score,
         "cost_score": cost_score,
         "reliability_score": reliability_score,
+        
+        # Score insights (reasons behind each score)
+        "score_insights": score_insights,
+        
+        # Actionable recommendations
+        "recommendations": recommendations,
         
         # Violation statistics
         "violations_count": violations_count,

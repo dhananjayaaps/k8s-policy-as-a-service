@@ -36,3 +36,4 @@ MANIFEST
 venv/
 
 *.db
+*.pyc
