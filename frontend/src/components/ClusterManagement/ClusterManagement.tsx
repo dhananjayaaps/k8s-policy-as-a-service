@@ -216,13 +216,25 @@ function ClusterCard({
   onInstallKyverno: (clusterId: number) => void;
 }) {
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-6 hover:shadow-md transition-shadow">
+    <div className={`bg-white rounded-xl border p-6 hover:shadow-md transition-shadow ${
+      cluster.is_active ? 'border-slate-200' : 'border-slate-200 opacity-75'
+    }`}>
       <div className="flex items-start justify-between">
         {/* Cluster Info */}
         <div className="flex-1">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
-              <Database className="w-5 h-5 text-emerald-600" />
+            <div className={`w-10 h-10 rounded-lg flex items-center justify-center relative ${
+              cluster.is_active ? 'bg-emerald-100' : 'bg-slate-100'
+            }`}>
+              <Database className={`w-5 h-5 ${cluster.is_active ? 'text-emerald-600' : 'text-slate-400'}`} />
+              {/* Status dot on the icon */}
+              <span className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white ${
+                cluster.is_active ? 'bg-emerald-500' : 'bg-slate-400'
+              }`}>
+                {cluster.is_active && (
+                  <span className="absolute inset-0 rounded-full bg-emerald-500 animate-ping opacity-75" />
+                )}
+              </span>
             </div>
             <div>
               <h4 className="font-semibold text-slate-900">{cluster.name}</h4>
@@ -248,27 +260,27 @@ function ClusterCard({
             )}
 
             {/* Status Badges */}
-            <div className="flex items-center gap-2 mt-3">
+            <div className="flex flex-wrap items-center gap-2 mt-3">
               {cluster.is_active ? (
-                <span className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-100 text-emerald-700 text-xs font-medium rounded">
-                  <CheckCircle className="w-3 h-3" />
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 text-emerald-700 text-xs font-semibold rounded-full border border-emerald-200">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                   Active
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-700 text-xs font-medium rounded">
-                  <XCircle className="w-3 h-3" />
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 text-slate-500 text-xs font-semibold rounded-full border border-slate-200">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
                   Inactive
                 </span>
               )}
 
               {kyvernoInstalled !== undefined && (
                 kyvernoInstalled ? (
-                  <span className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 text-xs font-medium rounded">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-full border border-blue-200">
                     <CheckCircle className="w-3 h-3" />
                     Kyverno Installed
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1 px-2 py-1 bg-yellow-100 text-yellow-700 text-xs font-medium rounded">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 text-amber-700 text-xs font-medium rounded-full border border-amber-200">
                     <AlertCircle className="w-3 h-3" />
                     Kyverno Not Installed
                   </span>
