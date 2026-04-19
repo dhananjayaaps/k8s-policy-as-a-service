@@ -312,6 +312,57 @@ async def list_clusters(
     return clusters
 
 
+@router.get("/{cluster_id}/health")
+async def check_cluster_health(cluster_id: int, db: Session = Depends(get_db)):
+    """
+    Fast reachability check for a stored cluster.
+    Tries to list namespaces with a short timeout and returns:
+      { "reachable": bool, "latency_ms": int|null, "error": str|null }
+    Never raises — always returns 200 so the frontend can read the body.
+    """
+    import time
+
+    cluster = db.query(Cluster).filter(Cluster.id == cluster_id).first()
+    if not cluster:
+        return {"reachable": False, "latency_ms": None, "error": "Cluster not found"}
+
+    # If cluster is marked inactive in DB, skip the live check
+    if not cluster.is_active:
+        return {"reachable": False, "latency_ms": None, "error": "Cluster is marked inactive"}
+
+    try:
+        kubeconfig_content = _resolve_cluster_kubeconfig(cluster, db)
+    except Exception as e:
+        return {"reachable": False, "latency_ms": None, "error": "No credentials configured"}
+
+    def _probe():
+        session_id, k8s = create_k8s_session()
+        try:
+            k8s.load_cluster_from_content(kubeconfig_content=kubeconfig_content)
+            k8s.list_namespaces()
+        finally:
+            close_k8s_session(session_id)
+
+    t0 = time.monotonic()
+    try:
+        await _run_k8s_in_thread(_probe, timeout=8.0)
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        return {"reachable": True, "latency_ms": latency_ms, "error": None}
+    except Exception as e:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        msg = str(e)
+        # Trim verbose connection errors to a user-friendly message
+        if "timeout" in msg.lower() or "timed out" in msg.lower():
+            msg = "Connection timed out — cluster unreachable"
+        elif "refused" in msg.lower():
+            msg = "Connection refused — API server may be down"
+        elif "certificate" in msg.lower() or "ssl" in msg.lower():
+            msg = "SSL/TLS error — check cluster certificate"
+        elif "credentials" in msg.lower() or "unauthorized" in msg.lower() or "401" in msg:
+            msg = "Unauthorized — credentials invalid or expired"
+        return {"reachable": False, "latency_ms": latency_ms, "error": msg}
+
+
 @router.get("/{cluster_id}/namespaces", response_model=NamespaceListResponse)
 async def list_namespaces(cluster_id: int, db: Session = Depends(get_db)):
     """

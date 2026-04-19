@@ -246,6 +246,19 @@ export async function adminUpdateUser(userId: number, data: { role?: string; is_
 
 // ============== Clusters API ==============
 
+export type ClusterHealth = {
+  reachable: boolean;
+  latency_ms: number | null;
+  error: string | null;
+};
+
+export async function getClusterHealth(clusterId: number): Promise<ApiResponse<ClusterHealth>> {
+  if (API_CONFIG.useMockData) {
+    return { data: { reachable: true, latency_ms: 42, error: null }, error: null, status: 200 };
+  }
+  return fetchApi<ClusterHealth>(`/clusters/${clusterId}/health`);
+}
+
 export async function getClusters(): Promise<ApiResponse<Cluster[]>> {
   if (API_CONFIG.useMockData) {
     await simulateDelay();

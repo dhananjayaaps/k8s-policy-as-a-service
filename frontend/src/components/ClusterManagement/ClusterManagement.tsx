@@ -9,6 +9,7 @@ import {
   CheckCircle, 
   XCircle, 
   AlertCircle,
+  WifiOff,
   Database,
   Loader2,
   Download
@@ -26,7 +27,7 @@ import EditClusterModal from './EditClusterModal';
 import InstallKyvernoModal from './InstallKyvernoModal';
 
 export default function ClusterManagement() {
-  const { refreshClusters } = useCluster();
+  const { refreshClusters, clusterHealth, recheckHealth } = useCluster();
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -162,9 +163,11 @@ export default function ClusterManagement() {
               cluster={cluster}
               kyvernoInstalled={kyvernoStatuses[cluster.id]}
               installingKyverno={installingKyverno[cluster.id] || false}
+              healthStatus={clusterHealth[cluster.id]}
               onDelete={handleDelete}
               onEdit={(cluster) => setEditingCluster(cluster)}
               onInstallKyverno={handleInstallKyverno}
+              onRecheckHealth={() => recheckHealth(cluster.id)}
             />
           ))}
         </div>
@@ -204,36 +207,80 @@ function ClusterCard({
   cluster,
   kyvernoInstalled,
   installingKyverno,
+  healthStatus,
   onDelete,
   onEdit,
-  onInstallKyverno
+  onInstallKyverno,
+  onRecheckHealth,
 }: {
   cluster: Cluster;
   kyvernoInstalled?: boolean;
   installingKyverno: boolean;
+  healthStatus?: { reachable: boolean; latency_ms: number | null; error: string | null; checkedAt: number };
   onDelete: (id: number, name: string) => void;
   onEdit: (cluster: Cluster) => void;
   onInstallKyverno: (clusterId: number) => void;
+  onRecheckHealth: () => void;
 }) {
+  // Derive the full 4-state status
+  type StatusState = 'active' | 'inactive' | 'unavailable' | 'checking';
+  const status: StatusState = !cluster.is_active
+    ? 'inactive'
+    : !healthStatus
+    ? 'checking'
+    : healthStatus.reachable
+    ? 'active'
+    : 'unavailable';
+
+  const statusConfig: Record<StatusState, { dotClass: string; pillClass: string; dotInner: React.ReactNode; label: string }> = {
+    active: {
+      dotClass: 'bg-emerald-500',
+      pillClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      dotInner: <span className="absolute inset-0 rounded-full bg-emerald-500 animate-ping opacity-75" />,
+      label: 'Active',
+    },
+    inactive: {
+      dotClass: 'bg-slate-400',
+      pillClass: 'bg-slate-100 text-slate-500 border-slate-200',
+      dotInner: null,
+      label: 'Inactive',
+    },
+    unavailable: {
+      dotClass: 'bg-red-500',
+      pillClass: 'bg-red-50 text-red-700 border-red-200',
+      dotInner: <span className="absolute inset-0 rounded-full bg-red-500 animate-ping opacity-50" />,
+      label: 'Unavailable',
+    },
+    checking: {
+      dotClass: 'bg-amber-400',
+      pillClass: 'bg-amber-50 text-amber-700 border-amber-200',
+      dotInner: null,
+      label: 'Checking…',
+    },
+  };
+  const sc = statusConfig[status];
   return (
     <div className={`bg-white rounded-xl border p-6 hover:shadow-md transition-shadow ${
-      cluster.is_active ? 'border-slate-200' : 'border-slate-200 opacity-75'
+      status === 'active' ? 'border-slate-200' :
+      status === 'unavailable' ? 'border-red-200 bg-red-50/30' :
+      'border-slate-200 opacity-75'
     }`}>
       <div className="flex items-start justify-between">
         {/* Cluster Info */}
         <div className="flex-1">
           <div className="flex items-center gap-3 mb-3">
             <div className={`w-10 h-10 rounded-lg flex items-center justify-center relative ${
-              cluster.is_active ? 'bg-emerald-100' : 'bg-slate-100'
+              status === 'active' ? 'bg-emerald-100' :
+              status === 'unavailable' ? 'bg-red-100' :
+              'bg-slate-100'
             }`}>
-              <Database className={`w-5 h-5 ${cluster.is_active ? 'text-emerald-600' : 'text-slate-400'}`} />
+              {status === 'unavailable'
+                ? <WifiOff className="w-5 h-5 text-red-500" />
+                : <Database className={`w-5 h-5 ${status === 'active' ? 'text-emerald-600' : 'text-slate-400'}`} />
+              }
               {/* Status dot on the icon */}
-              <span className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white ${
-                cluster.is_active ? 'bg-emerald-500' : 'bg-slate-400'
-              }`}>
-                {cluster.is_active && (
-                  <span className="absolute inset-0 rounded-full bg-emerald-500 animate-ping opacity-75" />
-                )}
+              <span className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white ${sc.dotClass}`}>
+                {sc.dotInner}
               </span>
             </div>
             <div>
@@ -261,16 +308,33 @@ function ClusterCard({
 
             {/* Status Badges */}
             <div className="flex flex-wrap items-center gap-2 mt-3">
-              {cluster.is_active ? (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 text-emerald-700 text-xs font-semibold rounded-full border border-emerald-200">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  Active
+              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full border ${sc.pillClass}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${sc.dotClass}`} />
+                {sc.label}
+              </span>
+
+              {/* Latency badge when active */}
+              {status === 'active' && healthStatus?.latency_ms != null && (
+                <span className="inline-flex items-center gap-1 px-2 py-1 bg-slate-50 text-slate-500 text-xs rounded-full border border-slate-200">
+                  {healthStatus.latency_ms}ms
                 </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 text-slate-500 text-xs font-semibold rounded-full border border-slate-200">
-                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-                  Inactive
+              )}
+
+              {/* Error message when unavailable */}
+              {status === 'unavailable' && healthStatus?.error && (
+                <span className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 text-red-600 text-xs rounded-full border border-red-200 max-w-xs truncate" title={healthStatus.error}>
+                  {healthStatus.error}
                 </span>
+              )}
+
+              {/* Re-check button when unavailable */}
+              {status === 'unavailable' && (
+                <button
+                  onClick={onRecheckHealth}
+                  className="inline-flex items-center gap-1 px-2 py-1 bg-white text-slate-600 text-xs rounded-full border border-slate-200 hover:bg-slate-50 transition-colors"
+                >
+                  Retry
+                </button>
               )}
 
               {kyvernoInstalled !== undefined && (

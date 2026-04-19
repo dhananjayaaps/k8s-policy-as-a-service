@@ -1,14 +1,16 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Cloud, LogOut, User, ChevronDown, CheckCircle, XCircle, WifiOff } from 'lucide-react';
+import { Cloud, LogOut, User, ChevronDown, CheckCircle, XCircle, WifiOff, AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { useCluster } from '@/src/contexts/ClusterContext';
 import { useRouter } from 'next/navigation';
 
+type StatusState = 'active' | 'inactive' | 'unavailable' | 'checking';
+
 export default function Header() {
   const { user, logout } = useAuth();
-  const { clusters, selectedClusterId, setSelectedClusterId, loading } = useCluster();
+  const { clusters, selectedClusterId, setSelectedClusterId, loading, clusterHealth } = useCluster();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -31,29 +33,52 @@ export default function Header() {
     router.push('/login');
   };
 
-  // Status helpers
-  const statusDot = (isActive: boolean) =>
-    isActive
-      ? 'bg-emerald-500 shadow-[0_0_0_2px_#d1fae5]'
-      : 'bg-slate-400 shadow-[0_0_0_2px_#e2e8f0]';
-
-  const connectionBadge = () => {
-    if (!selectedCluster) return null;
-    if (!selectedCluster.is_active) {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-600 text-xs font-medium rounded-full border border-slate-200">
-          <XCircle className="w-3 h-3" />
-          Inactive
-        </span>
-      );
-    }
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-100 text-emerald-700 text-xs font-medium rounded-full border border-emerald-200">
-        <CheckCircle className="w-3 h-3" />
-        Active
-      </span>
-    );
+  // Derive a 4-state status for any cluster
+  const getStatus = (cluster: { id: number; is_active: boolean }): StatusState => {
+    if (!cluster.is_active) return 'inactive';
+    const h = clusterHealth[cluster.id];
+    if (!h) return 'checking';
+    return h.reachable ? 'active' : 'unavailable';
   };
+
+  const statusStyles: Record<StatusState, { dot: string; badge: string; badgeText: string; badgeIcon: React.ReactNode; label: string }> = {
+    active: {
+      dot: 'bg-emerald-500 shadow-[0_0_0_2px_#d1fae5]',
+      badge: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+      badgeIcon: <CheckCircle className="w-3 h-3" />,
+      badgeText: '',
+      label: 'Active',
+    },
+    inactive: {
+      dot: 'bg-slate-400 shadow-[0_0_0_2px_#e2e8f0]',
+      badge: 'bg-slate-100 text-slate-600 border-slate-200',
+      badgeIcon: <XCircle className="w-3 h-3" />,
+      badgeText: '',
+      label: 'Inactive',
+    },
+    unavailable: {
+      dot: 'bg-red-500 shadow-[0_0_0_2px_#fee2e2]',
+      badge: 'bg-red-100 text-red-700 border-red-200',
+      badgeIcon: <WifiOff className="w-3 h-3" />,
+      badgeText: '',
+      label: 'Unavailable',
+    },
+    checking: {
+      dot: 'bg-amber-400 shadow-[0_0_0_2px_#fef3c7]',
+      badge: 'bg-amber-100 text-amber-700 border-amber-200',
+      badgeIcon: <AlertTriangle className="w-3 h-3" />,
+      badgeText: '',
+      label: 'Checking…',
+    },
+  };
+
+  const selectedStatus = selectedCluster ? getStatus(selectedCluster) : null;
+  const ss = selectedStatus ? statusStyles[selectedStatus] : null;
+
+  // Tooltip for unavailable: show the error reason
+  const unavailableError = selectedCluster && selectedStatus === 'unavailable'
+    ? clusterHealth[selectedCluster.id]?.error ?? 'Unreachable'
+    : null;
 
   return (
     <div className="bg-white border-b border-slate-200 px-8 py-4">
@@ -73,14 +98,14 @@ export default function Header() {
             >
               {selectedCluster ? (
                 <>
-                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot(selectedCluster.is_active)}`} />
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${ss?.dot ?? 'bg-slate-300'}`} />
                   <span className="truncate flex-1 text-left">{selectedCluster.name}</span>
                 </>
               ) : (
                 <>
                   <WifiOff className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                   <span className="flex-1 text-left text-slate-400">
-                    {loading ? 'Loading...' : 'No cluster'}
+                    {loading ? 'Loading…' : 'No cluster'}
                   </span>
                 </>
               )}
@@ -88,76 +113,77 @@ export default function Header() {
             </button>
 
             {open && clusters.length > 0 && (
-              <div className="absolute top-full mt-1 left-0 z-50 min-w-[240px] bg-white border border-slate-200 rounded-xl shadow-lg py-1 overflow-hidden">
-                {/* Active clusters */}
-                {clusters.some((c) => c.is_active) && (
-                  <>
-                    <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                      Active Clusters
-                    </div>
-                    {clusters.filter((c) => c.is_active).map((cluster) => (
-                      <button
-                        key={cluster.id}
-                        onClick={() => { setSelectedClusterId(cluster.id); setOpen(false); }}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm text-left hover:bg-slate-50 transition-colors ${
-                          selectedClusterId === cluster.id ? 'bg-emerald-50' : ''
-                        }`}
-                      >
-                        <span className="w-2 h-2 rounded-full flex-shrink-0 bg-emerald-500 shadow-[0_0_0_2px_#d1fae5]" />
-                        <div className="flex-1 min-w-0">
-                          <div className={`font-medium truncate ${selectedClusterId === cluster.id ? 'text-emerald-700' : 'text-slate-900'}`}>
-                            {cluster.name}
-                          </div>
-                          {cluster.host || cluster.server_url ? (
-                            <div className="text-[11px] text-slate-400 truncate font-mono">
-                              {cluster.server_url || cluster.host}
-                            </div>
-                          ) : null}
-                        </div>
-                        {selectedClusterId === cluster.id && (
-                          <CheckCircle className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                        )}
-                      </button>
-                    ))}
-                  </>
-                )}
+              <div className="absolute top-full mt-1 left-0 z-50 min-w-[280px] bg-white border border-slate-200 rounded-xl shadow-lg py-1 overflow-hidden">
+                {(['active', 'unavailable', 'checking', 'inactive'] as StatusState[]).map((group) => {
+                  const inGroup = clusters.filter((c) => getStatus(c) === group);
+                  if (inGroup.length === 0) return null;
 
-                {/* Inactive clusters */}
-                {clusters.some((c) => !c.is_active) && (
-                  <>
-                    <div className={`px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 ${clusters.some((c) => c.is_active) ? 'border-t border-slate-100 mt-1' : ''}`}>
-                      Inactive Clusters
-                    </div>
-                    {clusters.filter((c) => !c.is_active).map((cluster) => (
-                      <button
-                        key={cluster.id}
-                        onClick={() => { setSelectedClusterId(cluster.id); setOpen(false); }}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm text-left hover:bg-slate-50 transition-colors opacity-60 ${
-                          selectedClusterId === cluster.id ? 'bg-slate-50 opacity-100' : ''
-                        }`}
-                      >
-                        <span className="w-2 h-2 rounded-full flex-shrink-0 bg-slate-400 shadow-[0_0_0_2px_#e2e8f0]" />
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium truncate text-slate-600">{cluster.name}</div>
-                          {cluster.host || cluster.server_url ? (
-                            <div className="text-[11px] text-slate-400 truncate font-mono">
-                              {cluster.server_url || cluster.host}
+                  const groupLabel: Record<StatusState, string> = {
+                    active: 'Active',
+                    unavailable: 'Unavailable',
+                    checking: 'Checking',
+                    inactive: 'Inactive',
+                  };
+
+                  return (
+                    <div key={group}>
+                      <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 border-t border-slate-100 first:border-t-0">
+                        {groupLabel[group]}
+                      </div>
+                      {inGroup.map((cluster) => {
+                        const st = statusStyles[group];
+                        const health = clusterHealth[cluster.id];
+                        return (
+                          <button
+                            key={cluster.id}
+                            onClick={() => { setSelectedClusterId(cluster.id); setOpen(false); }}
+                            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm text-left hover:bg-slate-50 transition-colors ${
+                              selectedClusterId === cluster.id ? 'bg-slate-50' : ''
+                            } ${group === 'inactive' ? 'opacity-60' : ''}`}
+                          >
+                            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${st.dot} ${group === 'active' ? 'animate-none' : ''}`} />
+                            <div className="flex-1 min-w-0">
+                              <div className={`font-medium truncate ${selectedClusterId === cluster.id ? 'text-slate-900' : 'text-slate-700'}`}>
+                                {cluster.name}
+                              </div>
+                              {group === 'unavailable' && health?.error && (
+                                <div className="text-[11px] text-red-500 truncate">{health.error}</div>
+                              )}
+                              {group === 'active' && health?.latency_ms != null && (
+                                <div className="text-[11px] text-slate-400">{health.latency_ms}ms</div>
+                              )}
+                              {(cluster.server_url || cluster.host) && group !== 'unavailable' && (
+                                <div className="text-[11px] text-slate-400 truncate font-mono">
+                                  {cluster.server_url || cluster.host}
+                                </div>
+                              )}
                             </div>
-                          ) : null}
-                        </div>
-                        {selectedClusterId === cluster.id && (
-                          <CheckCircle className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                        )}
-                      </button>
-                    ))}
-                  </>
-                )}
+                            {selectedClusterId === cluster.id && (
+                              <CheckCircle className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
 
           {/* Status badge for selected cluster */}
-          {connectionBadge()}
+          {ss && selectedCluster && (
+            <span
+              className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full border ${ss.badge}`}
+              title={unavailableError ?? undefined}
+            >
+              {ss.badgeIcon}
+              {ss.label}
+              {unavailableError && (
+                <span className="ml-0.5 opacity-70" title={unavailableError}>— {unavailableError.length > 30 ? unavailableError.slice(0, 30) + '…' : unavailableError}</span>
+              )}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-4">
