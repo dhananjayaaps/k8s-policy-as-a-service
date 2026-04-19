@@ -12,6 +12,7 @@ All operations are idempotent:
 import json
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
 from contextlib import contextmanager
@@ -24,6 +25,32 @@ logger = logging.getLogger(__name__)
 # ── Timeout constants ─────────────────────────────────────────────────────────
 HELM_TIMEOUT = "10m0s"   # passed to helm --timeout
 SUBPROCESS_TIMEOUT = 660  # subprocess hard-kill timeout (seconds)
+
+# ── Helm binary resolution ────────────────────────────────────────────────────
+# When running as a systemd service the process PATH may be empty, so bare
+# "helm" is not resolvable. We probe well-known locations at import time.
+_HELM_SEARCH_PATHS = [
+    "/usr/local/bin/helm",
+    "/usr/bin/helm",
+    "/snap/bin/helm",
+    os.path.expanduser("~/bin/helm"),
+    os.path.expanduser("~/.local/bin/helm"),
+]
+
+def _find_helm() -> str | None:
+    found = shutil.which("helm")
+    if found:
+        return found
+    for path in _HELM_SEARCH_PATHS:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return None
+
+_HELM_BIN: str | None = _find_helm()
+if _HELM_BIN:
+    logger.info("helm_service: helm resolved to %s", _HELM_BIN)
+else:
+    logger.warning("helm_service: helm binary not found at import time")
 
 
 class HelmError(RuntimeError):
@@ -81,21 +108,35 @@ def _run(cmd: list[str], timeout: int = SUBPROCESS_TIMEOUT) -> subprocess.Comple
 
 
 def _helm_installed() -> bool:
+    helm = _HELM_BIN or _find_helm()
+    if not helm:
+        return False
     try:
         r = subprocess.run(
-            ["helm", "version", "--short"],
+            [helm, "version", "--short"],
             capture_output=True,
             text=True,
             timeout=10,
         )
         return r.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (FileNotFoundError, subprocess.TimeoutExpired, PermissionError):
         return False
 
 
-def _base_cmd(kubeconfig: str, context: Optional[str]) -> list[str]:
+def _helm_bin() -> str:
+    """Return the absolute helm path, or raise HelmError with install instructions."""
+    helm = _HELM_BIN or _find_helm()
+    if not helm:
+        raise HelmError(
+            "Helm 3 is not installed on the backend server. "
+            "Install it with: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"
+        )
+    return helm
+
+
+def _base_cmd(kubeconfig: str, context: str | None) -> list[str]:
     """Return the common helm flags for every command."""
-    cmd = ["helm", "--kubeconfig", kubeconfig]
+    cmd = [_helm_bin(), "--kubeconfig", kubeconfig]
     if context:
         cmd += ["--kube-context", context]
     return cmd
@@ -114,11 +155,7 @@ class HelmService:
 
     @staticmethod
     def assert_helm_available() -> None:
-        if not _helm_installed():
-            raise HelmError(
-                "Helm 3 is not installed on the server. "
-                "Install it from https://helm.sh/docs/intro/install/"
-            )
+        _helm_bin()  # raises HelmError with install instructions if not found
 
     # ── Install / Upgrade ─────────────────────────────────────────────────────
 
