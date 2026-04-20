@@ -8,46 +8,17 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from typing import Optional, Dict, Any, List, Tuple
 import os
-import shutil
 import logging
 import subprocess
 import json
 import tempfile
 import urllib3
+from . import helm_utils
 
 # Disable SSL warnings when verify_ssl=False
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
-
-# Resolve helm binary path once at import time.
-# subprocess inherits the process PATH which may be empty when running as a
-# systemd service or via uvicorn without a login shell.
-_HELM_SEARCH_PATHS = [
-    "/usr/local/bin/helm",
-    "/usr/bin/helm",
-    "/snap/bin/helm",
-    os.path.expanduser("~/bin/helm"),
-    os.path.expanduser("~/.local/bin/helm"),
-]
-
-def _find_helm() -> Optional[str]:
-    """Return the absolute path to the helm binary, or None if not found."""
-    # Prefer shutil.which (uses current PATH)
-    found = shutil.which("helm")
-    if found:
-        return found
-    # Fall back to well-known install locations
-    for path in _HELM_SEARCH_PATHS:
-        if os.path.isfile(path) and os.access(path, os.X_OK):
-            return path
-    return None
-
-HELM_BIN: Optional[str] = _find_helm()
-if HELM_BIN:
-    logger.info(f"Helm binary resolved to: {HELM_BIN}")
-else:
-    logger.warning("Helm binary not found at import time; will re-check on each call.")
 
 
 class K8sConnector:
@@ -510,31 +481,11 @@ class K8sConnector:
         Returns:
             True if helm command is available
         """
-        # Re-resolve on each call in case it was installed after startup
-        helm = HELM_BIN or _find_helm()
-        if not helm:
-            return False
-        try:
-            result = subprocess.run(
-                [helm, "version", "--short"],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError):
-            return False
+        return helm_utils.helm_installed()
 
     def _helm_bin(self) -> str:
         """Return helm binary path or raise a clear error."""
-        helm = HELM_BIN or _find_helm()
-        if not helm:
-            raise RuntimeError(
-                "Helm binary not found. "
-                "Install Helm 3 on the backend server: "
-                "curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"
-            )
-        return helm
+        return helm_utils.get_helm_bin()
     
     def install_kyverno_helm(
         self,
@@ -659,7 +610,7 @@ class K8sConnector:
             return False
         
         try:
-            helm = HELM_BIN or _find_helm() or "helm"
+            helm = helm_utils.HELM_BIN or helm_utils.find_helm() or "helm"
             cmd = [
                 helm, "list",
                 "--namespace", namespace,
@@ -701,7 +652,7 @@ class K8sConnector:
             raise RuntimeError("Not connected to any cluster")
         
         try:
-            helm = HELM_BIN or _find_helm() or "helm"
+            helm = helm_utils.HELM_BIN or helm_utils.find_helm() or "helm"
             cmd = [
                 helm, "status", release_name,
                 "--namespace", namespace,
@@ -746,7 +697,7 @@ class K8sConnector:
                 "message": f"Helm release '{release_name}' not found in namespace '{namespace}'"
             }
         
-        helm = HELM_BIN or _find_helm() or "helm"
+        helm = helm_utils.HELM_BIN or helm_utils.find_helm() or "helm"
         cmd = [
             helm, "uninstall", release_name,
             "--namespace", namespace,
