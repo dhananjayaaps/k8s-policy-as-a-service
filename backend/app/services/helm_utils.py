@@ -10,7 +10,7 @@ import logging
 import os
 import shutil
 import subprocess
-from typing import Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -79,3 +79,43 @@ def helm_installed() -> bool:
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired, PermissionError):
         return False
+
+
+def get_stable_kyverno_values() -> Dict[str, Any]:
+    """
+    Return recommended stable Helm values for Kyverno installation.
+
+    These values include:
+    - Single replica for admission controller (stable in development/test)
+    - ClusterIP service (no external exposure needed)
+    - Resource requests/limits for predictable resource usage
+    - Webhook timeout configuration for reliability
+    - Webhook cleanup enablement
+
+    Returns:
+        Dictionary of Helm values suitable for kyverno/kyverno chart
+    """
+    return {
+        "admissionController": {
+            "replicas": 1,
+            "service": {
+                "type": "ClusterIP"
+            },
+            "resources": {
+                "requests": {
+                    "cpu": "100m",
+                    "memory": "128Mi"
+                },
+                "limits": {
+                    "cpu": "500m",
+                    "memory": "512Mi"
+                }
+            }
+        },
+        "webhooksCleanup": {
+            "enabled": True
+        },
+        "config": {
+            "webhookTimeoutSeconds": 30
+        }
+    }

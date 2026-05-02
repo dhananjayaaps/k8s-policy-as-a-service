@@ -242,28 +242,43 @@ class SSHConnector:
         self,
         namespace: str = "kyverno",
         release_name: str = "kyverno",
-        create_namespace: bool = True
+        create_namespace: bool = True,
+        values: Optional[Dict[str, Any]] = None
     ) -> Tuple[str, str, int]:
         """
         Install Kyverno via Helm on remote server.
-        
+
         Args:
             namespace: Kubernetes namespace
             release_name: Helm release name
             create_namespace: Create namespace if it doesn't exist
-            
+            values: Custom Helm values dictionary
+
         Returns:
             Tuple of (stdout, stderr, exit_code)
         """
         commands = [
             "helm repo add kyverno https://kyverno.github.io/kyverno/",
             "helm repo update",
+        ]
+
+        # Build Helm install command with values
+        install_cmd = (
             f"helm install {release_name} kyverno/kyverno "
             f"-n {namespace} "
             f"{'--create-namespace' if create_namespace else ''} "
-            f"--wait --timeout=5m"
-        ]
-        
+        )
+
+        if values:
+            import json
+            install_cmd += " ".join([
+                f"--set-json '{k}={json.dumps(v)}'"
+                for k, v in values.items()
+            ]) + " "
+
+        install_cmd += "--wait --timeout=5m"
+        commands.append(install_cmd)
+
         full_command = " && ".join(commands)
         return self.execute_command(full_command, timeout=360)
     

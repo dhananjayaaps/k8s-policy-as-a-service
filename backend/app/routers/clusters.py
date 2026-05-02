@@ -59,6 +59,7 @@ from app.services.ssh_connector import (
     cleanup_expired_sessions,
     list_active_sessions
 )
+from app.services.helm_utils import get_stable_kyverno_values
 
 router = APIRouter(
     prefix="/clusters",
@@ -516,6 +517,7 @@ async def install_kyverno_with_token(
                 namespace=request.namespace,
                 release_name=request.release_name,
                 create_namespace=request.create_namespace,
+                values=request.values or get_stable_kyverno_values()
             )
         finally:
             close_k8s_session(session_id)
@@ -606,7 +608,7 @@ async def install_kyverno(
                 namespace=request.namespace,
                 release_name=request.release_name,
                 create_namespace=request.create_namespace,
-                values=request.values,
+                values=request.values or get_stable_kyverno_values(),
             )
         finally:
             close_k8s_session(session_id)
@@ -1020,7 +1022,8 @@ async def ssh_install_kyverno(
         stdout, stderr, exit_code = ssh.install_kyverno_remote(
             namespace=request.namespace,
             release_name=request.release_name,
-            create_namespace=request.create_namespace
+            create_namespace=request.create_namespace,
+            values=request.values or get_stable_kyverno_values()
         )
         
         success = exit_code == 0
@@ -1502,7 +1505,8 @@ async def setup_cluster_complete(
                 stdout, stderr, exit_code = ssh.install_kyverno_remote(
                     namespace=request.kyverno_namespace,
                     release_name="kyverno",
-                    create_namespace=True
+                    create_namespace=True,
+                    values=get_stable_kyverno_values()
                 )
                 
                 if exit_code == 0:

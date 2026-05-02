@@ -580,6 +580,7 @@ class RemoteKyvernoInstallRequest(BaseModel):
     namespace: str = Field(default="kyverno", description="Namespace to install Kyverno")
     release_name: str = Field(default="kyverno", description="Helm release name")
     create_namespace: bool = Field(default=True, description="Create namespace if it doesn't exist")
+    values: Optional[Dict[str, Any]] = Field(default=None, description="Custom Helm values")
 
 
 class MinikubeStatusResponse(BaseModel):
@@ -675,3 +676,4 @@ class KyvernoInstallViaTokenRequest(BaseModel):
     namespace: str = Field(default="kyverno", description="Namespace to install Kyverno")
     release_name: str = Field(default="kyverno", description="Helm release name")
     create_namespace: bool = Field(default=True, description="Create namespace if it doesn't exist")
+    values: Optional[Dict[str, Any]] = Field(default=None, description="Custom Helm values")
