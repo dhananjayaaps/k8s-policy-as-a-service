@@ -346,7 +346,9 @@ async def check_cluster_health(cluster_id: int, db: Session = Depends(get_db)):
 
     t0 = time.monotonic()
     try:
-        await _run_k8s_in_thread(_probe, timeout=8.0)
+        # Use 25s timeout to account for K8s connector's 5s connect + 15s read timeouts
+        # Plus buffer for overhead. This prevents false "unreachable" errors on slow clusters.
+        await _run_k8s_in_thread(_probe, timeout=25.0)
         latency_ms = int((time.monotonic() - t0) * 1000)
         return {"reachable": True, "latency_ms": latency_ms, "error": None}
     except Exception as e:
